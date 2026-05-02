@@ -7,7 +7,10 @@ from app.domain.chunks import DocumentChunk, RetrievedChunk
 
 class QdrantVectorStore:
     def __init__(self, settings: Settings) -> None:
-        self.client = QdrantClient(url=settings.qdrant_url)
+        if settings.qdrant_url == ":memory:":
+            self.client = QdrantClient(":memory:")
+        else:
+            self.client = QdrantClient(url=settings.qdrant_url)
         self.collection_name = settings.qdrant_collection
         self.vector_size = settings.embedding_dimension
 

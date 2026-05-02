@@ -7,12 +7,12 @@ def test_text_splitter_keeps_metadata() -> None:
     chunks = splitter.split(
         kb_id="default",
         doc_id="doc-1",
-        filename="demo.txt",
+        filename="sample.txt",
         text="abcdefghijklmnopqrstuvwxyz",
     )
 
     assert len(chunks) > 1
     assert chunks[0].kb_id == "default"
     assert chunks[0].doc_id == "doc-1"
-    assert chunks[0].filename == "demo.txt"
+    assert chunks[0].filename == "sample.txt"
     assert chunks[0].chunk_index == 0

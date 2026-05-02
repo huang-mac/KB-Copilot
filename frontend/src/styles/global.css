@@ -1,0 +1,91 @@
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f5f7fb;
+  color: #1f2937;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: #f5f7fb;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+  padding: 0 32px;
+  background: #0f172a;
+  color: #fff;
+}
+
+.brand-icon {
+  color: #60a5fa;
+  font-size: 32px;
+}
+
+.brand-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.brand-subtitle {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.app-content {
+  width: min(1280px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.hero-section {
+  margin-bottom: 24px;
+  padding: 28px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fff 0%, #eef6ff 100%);
+}
+
+.hero-section h2 {
+  margin-top: 0;
+}
+
+.panel-card {
+  margin-bottom: 24px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgb(15 23 42 / 6%);
+}
+
+.doc-list {
+  margin-top: 16px;
+}
+
+.answer-section {
+  margin-top: 28px;
+}
+
+.answer-card,
+.source-card {
+  width: 100%;
+  border-radius: 14px;
+  background: #fbfdff;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    height: auto;
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .app-content {
+    width: min(100% - 24px, 1280px);
+    padding-top: 20px;
+  }
+}

@@ -19,7 +19,7 @@ class OpenAIChatClient(LLMClient):
 
     async def generate_answer(self, *, question: str, context: str) -> str:
         if not self.api_key:
-            raise ExternalProviderError("LLM_API_KEY is required for openai llm provider.")
+            raise ExternalProviderError("LLM_API_KEY is required for OpenAI-compatible LLM.")
 
         messages = [
             {

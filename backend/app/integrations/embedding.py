@@ -25,7 +25,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
             raise ExternalProviderError(
-                "EMBEDDING_API_KEY is required for openai embedding provider."
+                "EMBEDDING_API_KEY is required for OpenAI-compatible embedding."
             )
 
         async with httpx.AsyncClient(timeout=60.0) as client:

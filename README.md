@@ -2,7 +2,7 @@
 
 面向中小企业的通用智能知识库问答助手，支持企业文档上传、向量化索引、语义检索、RAG 问答生成和答案来源引用。
 
-项目当前定位为 GitHub 简历展示项目，优先实现一个可运行、可演示、可部署的通用知识库系统。后续可以扩展到 ERP、WMS、客服知识库、产品文档、企业制度、内部培训资料等场景。
+项目当前定位为可运行、可部署的通用知识库系统。后续可以扩展到 ERP、WMS、客服知识库、产品文档、企业制度、内部培训资料等场景。
 
 ## 项目目标
 
@@ -10,7 +10,7 @@
 - 通过 Qdrant 向量检索找到与问题最相关的文档片段。
 - 通过大模型基于检索结果生成答案，减少人工翻文档成本。
 - 返回引用来源，让用户知道答案来自哪些资料片段。
-- 使用 Docker Compose 降低本地部署和演示成本。
+- 使用 Docker Compose 降低本地部署和验证成本。
 
 ## 技术栈
 
@@ -106,12 +106,11 @@ kb-copliot/
 
 ## 快速开始
 
-当前已完成 MVP0 后端闭环：支持上传 `txt` / `md` 文档、写入 Qdrant、检索 Top-K 片段并调用 LLM 生成回答。
+当前已进入 MVP1：在 MVP0 后端 RAG 闭环基础上，新增 React + Vite + TypeScript + Ant Design 前端，支持通过 Web 页面上传文档、发起问答并查看引用来源。
 
-### 1. 克隆项目
+### 1. 进入项目目录
 
 ```bash
-git clone https://github.com/your-name/kb-copliot.git
 cd kb-copliot
 ```
 
@@ -128,15 +127,15 @@ QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=kb_copilot
 
 EMBEDDING_PROVIDER=openai
-EMBEDDING_BASE_URL=https://api.openai.com/v1
-EMBEDDING_API_KEY=your-embedding-api-key
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
+EMBEDDING_BASE_URL=https://api.hunyuan.cloud.tencent.com/v1
+EMBEDDING_API_KEY=your-hunyuan-api-key
+EMBEDDING_MODEL=hunyuan-embedding
+EMBEDDING_DIMENSION=1024
 
 LLM_PROVIDER=openai
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=your-llm-api-key
-LLM_MODEL=gpt-4o-mini
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=your-deepseek-api-key
+LLM_MODEL=deepseek-chat
 ```
 
 如果只是本地冒烟测试，可以临时改成：
@@ -148,23 +147,42 @@ LLM_PROVIDER=mock
 
 ### 3. 启动服务
 
+开发模式建议先分别启动后端和前端：
+
+```bash
+# 后端
+cd backend
+../.venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+# 前端
+cd frontend
+npm run dev
+```
+
+如果本机 Docker 和网络代理配置正常，也可以使用 Docker Compose：
+
 ```bash
 docker compose up -d
 ```
 
 ### 4. 访问系统
 
+- 前端页面：`http://localhost:5173`
 - 后端接口：`http://localhost:8000/docs`
 - Qdrant 控制台：`http://localhost:6333/dashboard`
 
 ### 5. 上传文档
 
+推荐直接在前端页面上传，也可以通过命令行调用：
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/kbs/default/documents" \
-  -F "file=@./examples/demo.md"
+  -F "file=@./examples/sample.md"
 ```
 
 ### 6. 发起问答
+
+推荐直接在前端页面提问，也可以通过命令行调用：
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/kbs/default/chat" \
@@ -184,14 +202,14 @@ curl -X POST "http://localhost:8000/api/v1/kbs/default/chat" \
 - LLM 生成回答。
 - 返回答案和引用片段。
 
-### MVP 1：GitHub 简历展示版
+### MVP 1：完整体验版
 
 - React + Vite + TypeScript + Ant Design 前端。
-- 知识库列表、文档上传、智能问答页面。
-- 支持 PDF、Markdown、TXT。
+- 知识库 ID 配置、文档上传、智能问答页面。
+- 当前支持 Markdown、TXT，PDF 和 Word 放到后续增强。
 - 回答展示引用来源。
 - Docker Compose 启动前端、后端和 Qdrant。
-- README、架构图、接口说明、演示截图。
+- README、架构说明、接口说明、界面截图。
 
 ### MVP 1.5：中小公司可用增强版
 
@@ -262,7 +280,7 @@ POST   /api/v1/kbs/{kb_id}/chat
 - [迭代文档](docs/ITERATION_PLAN.md)
 - [代码学习文档](docs/CODE_LEARNING_GUIDE.md)
 
-## 简历描述参考
+## 项目描述参考
 
 > 基于 FastAPI、Qdrant、React 和大模型 API 设计并实现面向中小企业的智能知识库问答系统，支持文档上传、向量化索引、语义检索、RAG 问答生成与答案来源引用，并通过 Docker Compose 提供一键部署能力。
 

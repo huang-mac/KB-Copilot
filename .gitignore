@@ -35,3 +35,4 @@ logs/
 storage/
 uploads/
 qdrant_storage/
+local/
