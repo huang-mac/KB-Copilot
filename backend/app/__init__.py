@@ -1,0 +1,1 @@
+"""KB Copilot backend application."""

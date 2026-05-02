@@ -106,7 +106,7 @@ kb-copliot/
 
 ## 快速开始
 
-> 当前仓库处于项目初始化阶段，以下命令会随着代码实现逐步完善。
+当前已完成 MVP0 后端闭环：支持上传 `txt` / `md` 文档、写入 Qdrant、检索 Top-K 片段并调用 LLM 生成回答。
 
 ### 1. 克隆项目
 
@@ -124,12 +124,26 @@ cp .env.example .env
 需要配置：
 
 ```env
-QDRANT_URL=http://qdrant:6333
+QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=kb_copilot
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=your-api-key
-LLM_MODEL=gpt-4o-mini
+
+EMBEDDING_PROVIDER=openai
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_API_KEY=your-embedding-api-key
 EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=your-llm-api-key
+LLM_MODEL=gpt-4o-mini
+```
+
+如果只是本地冒烟测试，可以临时改成：
+
+```env
+EMBEDDING_PROVIDER=mock
+LLM_PROVIDER=mock
 ```
 
 ### 3. 启动服务
@@ -140,9 +154,23 @@ docker compose up -d
 
 ### 4. 访问系统
 
-- 前端页面：`http://localhost:5173`
 - 后端接口：`http://localhost:8000/docs`
 - Qdrant 控制台：`http://localhost:6333/dashboard`
+
+### 5. 上传文档
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/kbs/default/documents" \
+  -F "file=@./examples/demo.md"
+```
+
+### 6. 发起问答
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/kbs/default/chat" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"这份文档主要讲了什么？\",\"top_k\":5}"
+```
 
 ## MVP 版本规划
 
@@ -190,13 +218,9 @@ docker compose up -d
 ## API 设计草案
 
 ```text
-GET    /api/health
-GET    /api/kbs
-POST   /api/kbs
-POST   /api/kbs/{kb_id}/documents
-GET    /api/kbs/{kb_id}/documents
-DELETE /api/kbs/{kb_id}/documents/{doc_id}
-POST   /api/kbs/{kb_id}/chat
+GET    /api/v1/health
+POST   /api/v1/kbs/{kb_id}/documents
+POST   /api/v1/kbs/{kb_id}/chat
 ```
 
 问答请求：
