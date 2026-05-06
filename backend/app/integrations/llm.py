@@ -1,4 +1,5 @@
-import httpx
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from app.core.config import Settings
 from app.core.exceptions import ExternalProviderError
@@ -11,47 +12,42 @@ class LLMClient:
 
 class OpenAIChatClient(LLMClient):
     def __init__(self, settings: Settings) -> None:
-        self.base_url = settings.llm_base_url.rstrip("/")
         self.api_key = settings.llm_api_key
-        self.model = settings.llm_model
-        self.temperature = settings.llm_temperature
-        self.timeout = settings.llm_timeout_seconds
+        self.chat_model = ChatOpenAI(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url.rstrip("/"),
+            model=settings.llm_model,
+            temperature=settings.llm_temperature,
+            streaming=True,
+            timeout=settings.llm_timeout_seconds,
+        )
 
     async def generate_answer(self, *, question: str, context: str) -> str:
         if not self.api_key:
-            raise ExternalProviderError("LLM_API_KEY is required for OpenAI-compatible LLM.")
+            raise ExternalProviderError("LLM_API_KEY is required for LangChain OpenAI-compatible LLM.")
 
         messages = [
-            {
-                "role": "system",
-                "content": (
+            SystemMessage(
+                content=(
                     "你是一个企业知识库问答助手。"
                     "请只根据给定资料回答问题；如果资料中没有答案，"
                     "请回答“根据当前知识库资料无法确认”。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"资料：\n{context}\n\n问题：\n{question}",
-            },
+                )
+            ),
+            HumanMessage(content=f"资料：\n{context}\n\n问题：\n{question}"),
         ]
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": self.temperature,
-                },
-            )
+        try:
+            response = await self.chat_model.ainvoke(messages)
+        except Exception as exc:
+            raise ExternalProviderError(f"LLM provider error: {exc}") from exc
 
-        if response.status_code >= 400:
-            raise ExternalProviderError(f"LLM provider error: {response.text}")
-
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+        if isinstance(response.content, str):
+            return response.content.strip()
+        return "".join(
+            str(part.get("text", part)) if isinstance(part, dict) else str(part)
+            for part in response.content
+        ).strip()
 
 
 class MockLLMClient(LLMClient):

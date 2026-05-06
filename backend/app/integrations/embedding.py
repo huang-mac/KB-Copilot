@@ -1,7 +1,7 @@
 import hashlib
 import math
 
-import httpx
+from langchain_openai import OpenAIEmbeddings
 
 from app.core.config import Settings
 from app.core.exceptions import ExternalProviderError
@@ -18,28 +18,24 @@ class EmbeddingClient:
 
 class OpenAIEmbeddingClient(EmbeddingClient):
     def __init__(self, settings: Settings) -> None:
-        self.base_url = settings.embedding_base_url.rstrip("/")
         self.api_key = settings.embedding_api_key
-        self.model = settings.embedding_model
+        self.client = OpenAIEmbeddings(
+            api_key=settings.embedding_api_key,
+            base_url=settings.embedding_base_url.rstrip("/"),
+            model=settings.embedding_model,
+            check_embedding_ctx_length=False,
+        )
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
             raise ExternalProviderError(
-                "EMBEDDING_API_KEY is required for OpenAI-compatible embedding."
+                "EMBEDDING_API_KEY is required for LangChain OpenAI-compatible embedding."
             )
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{self.base_url}/embeddings",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={"model": self.model, "input": texts},
-            )
-
-        if response.status_code >= 400:
-            raise ExternalProviderError(f"Embedding provider error: {response.text}")
-
-        data = response.json()
-        return [item["embedding"] for item in data["data"]]
+        try:
+            return await self.client.aembed_documents(texts)
+        except Exception as exc:
+            raise ExternalProviderError(f"Embedding provider error: {exc}") from exc
 
 
 class MockEmbeddingClient(EmbeddingClient):

@@ -1,5 +1,7 @@
 import uuid
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from app.domain.chunks import DocumentChunk
 
 
@@ -9,16 +11,17 @@ class TextSplitter:
             raise ValueError("chunk_overlap must be smaller than chunk_size")
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""],
+        )
 
     def split(self, *, kb_id: str, doc_id: str, filename: str, text: str) -> list[DocumentChunk]:
         normalized = self._normalize_text(text)
         chunks: list[DocumentChunk] = []
-        start = 0
-        chunk_index = 0
-
-        while start < len(normalized):
-            end = min(start + self.chunk_size, len(normalized))
-            content = normalized[start:end].strip()
+        for chunk_index, raw_content in enumerate(self.splitter.split_text(normalized)):
+            content = raw_content.strip()
             if content:
                 chunks.append(
                     DocumentChunk(
@@ -30,11 +33,6 @@ class TextSplitter:
                         content=content,
                     )
                 )
-                chunk_index += 1
-
-            if end >= len(normalized):
-                break
-            start = end - self.chunk_overlap
 
         return chunks
 
