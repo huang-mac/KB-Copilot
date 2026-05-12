@@ -1,5 +1,9 @@
 # MVP1 当前版本说明
 
+> **状态：已完成** ✅
+>
+> 经代码核对，MVP1 的上传、切分、向量入库、检索、问答、引用来源和 Docker Compose 基础编排均已实现。MVP1 中列出的限制已作为 MVP2 的重点改进方向推进，具体见 [MVP2 对话与文档管理增强](MVP2.md)。
+
 ## 版本定位
 
 MVP1 是 KB Copilot 的完整体验版，目标是提供一个可本地启动、可通过 Web 页面演示的知识库 RAG 系统。
@@ -27,6 +31,14 @@ MVP1 是 KB Copilot 的完整体验版，目标是提供一个可本地启动、
 - 已实现 OpenAI-compatible Embedding / LLM 调用，并提供 mock 模式用于本地冒烟测试。
 - 已实现 Qdrant 向量写入、按知识库 ID 过滤检索和 Top-K 召回。
 - 已实现 Docker Compose 编排前端、后端和 Qdrant。
+
+## 规格文档
+
+MVP1 的 SDD 基线文档放在 `.claude/specs/mvp1/`：
+
+- [spec.md](../.claude/specs/mvp1/spec.md)：描述需求和验收标准。
+- [plan.md](../.claude/specs/mvp1/plan.md)：描述技术方案和模块设计。
+- [tasks.md](../.claude/specs/mvp1/tasks.md)：描述可执行任务和验证清单。
 
 ## RAG 流程
 
@@ -127,3 +139,5 @@ LLM_PROVIDER=mock
 - 增加上传状态和索引状态，让用户知道文档是否已可用于问答。
 - 增加对话历史，支持新建会话、切换历史会话和继续追问。
 - 保留引用来源回看，方便从历史回答追溯到命中文档片段。
+
+> 实现状态：以上 MVP2 方向已基本落地；重新索引和原文件存储能力依赖 MinIO 配置，详见 [MVP2 对话与文档管理增强](MVP2.md)。

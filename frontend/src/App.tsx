@@ -205,25 +205,27 @@ function App() {
       return null;
     }
 
+    // Deduplicate by filename, keep highest score per file
+    const fileMap = new Map<string, Source>();
+    for (const s of sources) {
+      const existing = fileMap.get(s.filename);
+      if (!existing || s.score > existing.score) {
+        fileMap.set(s.filename, s);
+      }
+    }
+    const uniqueFiles = [...fileMap.values()].sort((a, b) => b.score - a.score);
+
     return (
-      <List
-        className="message-sources"
-        dataSource={sources}
-        renderItem={(source) => (
-          <List.Item>
-            <Card className="source-card">
-              <Space direction="vertical" size={8}>
-                <Space wrap>
-                  <Tag color="blue">{source.filename}</Tag>
-                  <Tag>chunk #{source.chunk_index}</Tag>
-                  <Tag color="green">score {source.score.toFixed(4)}</Tag>
-                </Space>
-                <Paragraph ellipsis={{ rows: 4, expandable: true }}>{source.content}</Paragraph>
-              </Space>
-            </Card>
-          </List.Item>
-        )}
-      />
+      <div className="message-sources">
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          参考文档：
+        </Text>
+        <Space wrap size={4}>
+          {uniqueFiles.map((s) => (
+            <Tag key={s.filename} color="blue">{s.filename}</Tag>
+          ))}
+        </Space>
+      </div>
     );
   }
 
