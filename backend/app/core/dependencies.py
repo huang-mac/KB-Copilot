@@ -3,7 +3,10 @@ from functools import lru_cache
 from app.core.config import Settings, get_settings
 from app.integrations.embedding import create_embedding_client
 from app.integrations.llm import create_llm_client
+from app.integrations.minio_storage import MinioDocumentStorage
 from app.integrations.qdrant import QdrantVectorStore
+from app.repositories.conversations import ConversationRepository
+from app.repositories.documents import DocumentRepository
 from app.services.document_index_service import DocumentIndexService
 from app.services.document_loader import DocumentLoader
 from app.services.rag_service import RAGService
@@ -17,6 +20,26 @@ def get_vector_store() -> QdrantVectorStore:
 
 
 @lru_cache
+def get_document_repository() -> DocumentRepository:
+    settings = get_settings()
+    return DocumentRepository(settings.document_db_path)
+
+
+@lru_cache
+def get_conversation_repository() -> ConversationRepository:
+    settings = get_settings()
+    return ConversationRepository(settings.document_db_path)
+
+
+@lru_cache
+def get_document_storage() -> MinioDocumentStorage | None:
+    settings = get_settings()
+    if not settings.minio_enabled:
+        return None
+    return MinioDocumentStorage(settings)
+
+
+@lru_cache
 def get_document_index_service() -> DocumentIndexService:
     settings: Settings = get_settings()
     return DocumentIndexService(
@@ -27,6 +50,8 @@ def get_document_index_service() -> DocumentIndexService:
         ),
         embedding_client=create_embedding_client(settings),
         vector_store=get_vector_store(),
+        document_repository=get_document_repository(),
+        document_storage=get_document_storage(),
     )
 
 

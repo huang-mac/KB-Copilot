@@ -6,7 +6,7 @@ from app.core.exceptions import ExternalProviderError
 
 
 class LLMClient:
-    async def generate_answer(self, *, question: str, context: str) -> str:
+    async def generate_answer(self, *, question: str, context: str, history: str = "") -> str:
         raise NotImplementedError
 
 
@@ -22,9 +22,11 @@ class OpenAIChatClient(LLMClient):
             timeout=settings.llm_timeout_seconds,
         )
 
-    async def generate_answer(self, *, question: str, context: str) -> str:
+    async def generate_answer(self, *, question: str, context: str, history: str = "") -> str:
         if not self.api_key:
-            raise ExternalProviderError("LLM_API_KEY is required for LangChain OpenAI-compatible LLM.")
+            raise ExternalProviderError(
+                "LLM_API_KEY is required for LangChain OpenAI-compatible LLM."
+            )
 
         messages = [
             SystemMessage(
@@ -34,7 +36,9 @@ class OpenAIChatClient(LLMClient):
                     "请回答“根据当前知识库资料无法确认”。"
                 )
             ),
-            HumanMessage(content=f"资料：\n{context}\n\n问题：\n{question}"),
+            HumanMessage(
+                content=f"历史对话：\n{history or '无'}\n\n资料：\n{context}\n\n问题：\n{question}"
+            ),
         ]
 
         try:
@@ -51,7 +55,7 @@ class OpenAIChatClient(LLMClient):
 
 
 class MockLLMClient(LLMClient):
-    async def generate_answer(self, *, question: str, context: str) -> str:
+    async def generate_answer(self, *, question: str, context: str, history: str = "") -> str:
         if not context.strip():
             return "根据当前知识库资料无法确认。"
 

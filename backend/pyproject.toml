@@ -5,14 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kb-copilot-backend"
 version = "0.1.0"
-description = "FastAPI backend for KB Copilot MVP0"
+description = "FastAPI backend for KB Copilot MVP1"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.27.0",
     "langchain",
     "langchain-openai",
-    "langchain-text-splitters",
+    "langchain_text_splitters",
+    "minio",
     "pydantic-settings>=2.5.0",
     "python-multipart>=0.0.9",
     "qdrant-client>=1.11.0",

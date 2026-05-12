@@ -18,6 +18,14 @@ class Settings(BaseSettings):
 
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "kb_copilot"
+    document_db_path: str = "data/kb_copilot.sqlite3"
+
+    minio_enabled: bool = False
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = "admin"
+    minio_secret_key: str = "admin123456"
+    minio_bucket: str = "kb-copilot-documents"
+    minio_secure: bool = False
 
     chunk_size: int = 700
     chunk_overlap: int = 120

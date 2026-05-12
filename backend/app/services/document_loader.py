@@ -10,7 +10,7 @@ class DocumentLoader:
         suffix = Path(filename).suffix.lower()
         if suffix not in self.supported_suffixes:
             raise UnsupportedDocumentError(
-                f"Unsupported document type '{suffix}'. MVP0 supports txt and md."
+                f"Unsupported document type '{suffix}'. MVP1 supports txt and md."
             )
 
         text = self._decode_text(content)

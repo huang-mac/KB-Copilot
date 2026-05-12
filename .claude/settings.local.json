@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker --version)",
+      "Bash(docker compose *)",
+      "Bash(where docker *)",
+      "Read(//c/Program Files/Docker/Docker/resources/bin/**)",
+      "Read(//mnt/c/Program Files/Docker/Docker/resources/bin/**)",
+      "Bash(wsl -l -q)",
+      "Bash(reg query *)",
+      "Bash(echo \"exit: $?\")",
+      "Read(//c/Program Files/**)",
+      "Read(//mnt/c/Program Files/**)",
+      "Bash(docker.exe --version)",
+      "Bash(powershell.exe -Command \"Get-Command docker -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell.exe -Command 'Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -like '\\\\''*Docker*'\\\\'' } | Select-Object Name, Version')"
+    ]
+  }
+}

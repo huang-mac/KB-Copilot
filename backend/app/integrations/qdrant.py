@@ -28,7 +28,13 @@ class QdrantVectorStore:
             ),
         )
 
-    def upsert_chunks(self, chunks: list[DocumentChunk], vectors: list[list[float]]) -> None:
+    def upsert_chunks(
+        self,
+        chunks: list[DocumentChunk],
+        vectors: list[list[float]],
+        *,
+        created_at: str,
+    ) -> None:
         self.ensure_collection()
         points = [
             models.PointStruct(
@@ -39,12 +45,33 @@ class QdrantVectorStore:
                     "doc_id": chunk.doc_id,
                     "filename": chunk.filename,
                     "chunk_index": chunk.chunk_index,
+                    "created_at": created_at,
                     "content": chunk.content,
                 },
             )
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
         self.client.upsert(collection_name=self.collection_name, points=points)
+
+    def delete_document(self, *, kb_id: str, doc_id: str) -> None:
+        self.ensure_collection()
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="kb_id",
+                            match=models.MatchValue(value=kb_id),
+                        ),
+                        models.FieldCondition(
+                            key="doc_id",
+                            match=models.MatchValue(value=doc_id),
+                        ),
+                    ]
+                )
+            ),
+        )
 
     def search(self, *, kb_id: str, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
         self.ensure_collection()

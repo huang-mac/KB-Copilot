@@ -22,12 +22,27 @@ class RAGService:
         kb_id: str,
         question: str,
         top_k: int,
+        history: list[tuple[str, str]] | None = None,
     ) -> tuple[str, list[RetrievedChunk]]:
-        query_vector = await self.embedding_client.embed_query(question)
+        history_text = self._build_history(history or [])
+        query_text = "\n".join([history_text, question]).strip()
+        query_vector = await self.embedding_client.embed_query(query_text)
         sources = self.vector_store.search(kb_id=kb_id, query_vector=query_vector, top_k=top_k)
         context = self._build_context(sources)
-        answer = await self.llm_client.generate_answer(question=question, context=context)
+        answer = await self.llm_client.generate_answer(
+            question=question,
+            context=context,
+            history=history_text,
+        )
         return answer, sources
+
+    def _build_history(self, history: list[tuple[str, str]]) -> str:
+        recent_history = history[-8:]
+        lines = []
+        for role, content in recent_history:
+            label = "用户" if role == "user" else "助手"
+            lines.append(f"{label}：{content}")
+        return "\n".join(lines)
 
     def _build_context(self, sources: list[RetrievedChunk]) -> str:
         blocks = []

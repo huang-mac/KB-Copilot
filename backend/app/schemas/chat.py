@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, description="User question")
     top_k: int | None = Field(default=None, ge=1, le=20)
+    conversation_id: str | None = None
 
 
 class Source(BaseModel):
@@ -15,5 +16,6 @@ class Source(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    conversation_id: str
     answer: str
     sources: list[Source]

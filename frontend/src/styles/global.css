@@ -62,12 +62,57 @@ body {
   box-shadow: 0 10px 30px rgb(15 23 42 / 6%);
 }
 
-.doc-list {
+.main-tabs .ant-tabs-nav {
+  margin-bottom: 20px;
+}
+
+.compact-form-item {
+  margin-bottom: 0;
+}
+
+.upload-tip,
+.chat-tip {
   margin-top: 16px;
+}
+
+.mono-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
 }
 
 .answer-section {
   margin-top: 28px;
+}
+
+.conversation-item {
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 10px 12px !important;
+}
+
+.conversation-item.active,
+.conversation-item:hover {
+  background: #eef6ff;
+}
+
+.message-list {
+  margin: 16px 0 24px;
+}
+
+.chat-message {
+  border-block-end: 0 !important;
+}
+
+.chat-message.user {
+  justify-content: flex-end;
+}
+
+.chat-message.assistant {
+  justify-content: flex-start;
+}
+
+.message-sources {
+  margin-top: 8px;
 }
 
 .answer-card,

@@ -36,3 +36,4 @@ storage/
 uploads/
 qdrant_storage/
 local/
+data/

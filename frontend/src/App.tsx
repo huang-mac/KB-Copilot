@@ -1,7 +1,8 @@
 import {
   CloudUploadOutlined,
-  DatabaseOutlined,
+  DeleteOutlined,
   MessageOutlined,
+  ReloadOutlined,
   RobotOutlined,
 } from "@ant-design/icons";
 import {
@@ -9,38 +10,57 @@ import {
   Button,
   Card,
   Col,
-  Divider,
   Form,
   Input,
   InputNumber,
   Layout,
   List,
   message,
+  Popconfirm,
   Row,
   Space,
   Statistic,
+  Table,
+  Tabs,
   Tag,
   Typography,
   Upload,
 } from "antd";
-import type { UploadProps } from "antd";
+import type { TableProps, UploadProps } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
-import { askQuestion, healthCheck, uploadDocument } from "./api/client";
-import type { ChatResponse, DocumentUploadResponse } from "./types/api";
+import {
+  askQuestion,
+  createConversation,
+  deleteDocument,
+  healthCheck,
+  listConversationMessages,
+  listConversations,
+  listDocuments,
+  reindexDocument,
+  uploadDocument,
+} from "./api/client";
+import type { ConversationMessage, ConversationRecord, DocumentRecord, Source } from "./types/api";
 
 const { Header, Content } = Layout;
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Text } = Typography;
 
 function App() {
-  const [kbId, setKbId] = useState("default");
+  const kbId = "default";
   const [question, setQuestion] = useState("KB Copilot 是什么？");
   const [topK, setTopK] = useState(5);
   const [serviceStatus, setServiceStatus] = useState("checking");
   const [uploading, setUploading] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+  const [reindexingDocId, setReindexingDocId] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
-  const [uploadedDocs, setUploadedDocs] = useState<DocumentUploadResponse[]>([]);
-  const [chatResult, setChatResult] = useState<ChatResponse | null>(null);
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [conversations, setConversations] = useState<ConversationRecord[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
 
   useEffect(() => {
     healthCheck()
@@ -48,16 +68,79 @@ function App() {
       .catch(() => setServiceStatus("unavailable"));
   }, []);
 
+  useEffect(() => {
+    void refreshDocuments();
+    void refreshConversations();
+  }, [kbId]);
+
+  async function refreshDocuments() {
+    setLoadingDocuments(true);
+    try {
+      const result = await listDocuments(kbId);
+      setDocuments(result.documents);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "加载文档列表失败");
+    } finally {
+      setLoadingDocuments(false);
+    }
+  }
+
+  async function refreshConversations() {
+    setLoadingConversations(true);
+    try {
+      const result = await listConversations(kbId);
+      setConversations(result.conversations);
+      if (!activeConversationId && result.conversations.length > 0) {
+        const firstConversationId = result.conversations[0].conversation_id;
+        setActiveConversationId(firstConversationId);
+        await loadConversationMessages(firstConversationId);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "加载会话列表失败");
+    } finally {
+      setLoadingConversations(false);
+    }
+  }
+
+  async function loadConversationMessages(conversationId: string) {
+    setLoadingMessages(true);
+    try {
+      const result = await listConversationMessages(kbId, conversationId);
+      setConversationMessages(result.messages);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "加载会话消息失败");
+    } finally {
+      setLoadingMessages(false);
+    }
+  }
+
+  async function handleSelectConversation(conversationId: string) {
+    setActiveConversationId(conversationId);
+    await loadConversationMessages(conversationId);
+  }
+
+  async function handleCreateConversation() {
+    try {
+      const conversation = await createConversation(kbId);
+      setActiveConversationId(conversation.conversation_id);
+      setConversationMessages([]);
+      await refreshConversations();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "新建会话失败");
+    }
+  }
+
   const uploadProps: UploadProps = useMemo(
     () => ({
       beforeUpload: async (file) => {
         setUploading(true);
         try {
           const result = await uploadDocument(kbId, file);
-          setUploadedDocs((current) => [result, ...current]);
+          await refreshDocuments();
           message.success(`已索引 ${result.filename}，共 ${result.chunk_count} 个片段`);
         } catch (error) {
           message.error(error instanceof Error ? error.message : "上传失败");
+          await refreshDocuments();
         } finally {
           setUploading(false);
         }
@@ -70,6 +153,33 @@ function App() {
     [kbId],
   );
 
+  async function handleDeleteDocument(docId: string) {
+    setDeletingDocId(docId);
+    try {
+      await deleteDocument(kbId, docId);
+      message.success("文档已删除");
+      await refreshDocuments();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      setDeletingDocId(null);
+    }
+  }
+
+  async function handleReindexDocument(docId: string) {
+    setReindexingDocId(docId);
+    try {
+      const result = await reindexDocument(kbId, docId);
+      message.success(`已重新索引 ${result.filename}，共 ${result.chunk_count} 个片段`);
+      await refreshDocuments();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "重新索引失败");
+      await refreshDocuments();
+    } finally {
+      setReindexingDocId(null);
+    }
+  }
+
   async function handleAsk() {
     if (!question.trim()) {
       message.warning("请输入问题");
@@ -78,14 +188,125 @@ function App() {
 
     setAsking(true);
     try {
-      const result = await askQuestion(kbId, question.trim(), topK);
-      setChatResult(result);
+      const result = await askQuestion(kbId, question.trim(), topK, activeConversationId);
+      setActiveConversationId(result.conversation_id);
+      setQuestion("");
+      await refreshConversations();
+      await loadConversationMessages(result.conversation_id);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "问答失败");
     } finally {
       setAsking(false);
     }
   }
+
+  function renderSources(sources?: Source[] | null) {
+    if (!sources?.length) {
+      return null;
+    }
+
+    return (
+      <List
+        className="message-sources"
+        dataSource={sources}
+        renderItem={(source) => (
+          <List.Item>
+            <Card className="source-card">
+              <Space direction="vertical" size={8}>
+                <Space wrap>
+                  <Tag color="blue">{source.filename}</Tag>
+                  <Tag>chunk #{source.chunk_index}</Tag>
+                  <Tag color="green">score {source.score.toFixed(4)}</Tag>
+                </Space>
+                <Paragraph ellipsis={{ rows: 4, expandable: true }}>{source.content}</Paragraph>
+              </Space>
+            </Card>
+          </List.Item>
+        )}
+      />
+    );
+  }
+
+  const documentColumns: TableProps<DocumentRecord>["columns"] = [
+    {
+      title: "文档",
+      dataIndex: "filename",
+      render: (filename: string, record) => (
+        <Space direction="vertical" size={2}>
+          <Text strong>{filename}</Text>
+          <Text type="secondary" className="mono-text">
+            {record.doc_id}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: "片段数",
+      dataIndex: "chunk_count",
+      align: "right",
+      width: 96,
+    },
+    {
+      title: "索引状态",
+      dataIndex: "status",
+      render: (status: DocumentRecord["status"]) => {
+        const statusMap = {
+          indexing: { color: "processing", text: "索引中" },
+          completed: { color: "success", text: "已完成" },
+          failed: { color: "error", text: "失败" },
+        } as const;
+        const meta = statusMap[status];
+        return <Tag color={meta.color}>{meta.text}</Tag>;
+      },
+    },
+    {
+      title: "上传时间",
+      dataIndex: "created_at",
+      responsive: ["lg"],
+      render: (value: string) => new Date(value).toLocaleString("zh-CN"),
+    },
+    {
+      title: "失败原因",
+      dataIndex: "error_message",
+      ellipsis: true,
+      render: (error?: string | null) => error || "-",
+    },
+    {
+      title: "操作",
+      key: "actions",
+      width: 180,
+      render: (_, record) => (
+        <Space>
+          <Button
+            type="link"
+            icon={<ReloadOutlined />}
+            loading={reindexingDocId === record.doc_id}
+            disabled={record.status === "indexing" || deletingDocId === record.doc_id}
+            onClick={() => handleReindexDocument(record.doc_id)}
+          >
+            重新索引
+          </Button>
+          <Popconfirm
+            title="确认删除文档？"
+            description="会同步删除 MinIO 原文件和 Qdrant 中的文档片段。"
+            okText="删除"
+            cancelText="取消"
+            onConfirm={() => handleDeleteDocument(record.doc_id)}
+          >
+            <Button
+              danger
+              type="link"
+              icon={<DeleteOutlined />}
+              loading={deletingDocId === record.doc_id}
+              disabled={reindexingDocId === record.doc_id}
+            >
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   return (
     <Layout className="app-shell">
@@ -103,136 +324,187 @@ function App() {
       </Header>
 
       <Content className="app-content">
-        <section className="hero-section">
-          <Title level={2}>面向中小企业的通用知识库 RAG 系统</Title>
-          <Paragraph type="secondary">
-            上传企业文档，构建向量索引，通过语义检索和大模型生成带引用来源的回答。
-            MVP1 先提供可演示的 Web 界面，便于 GitHub 展示和简历包装。
-          </Paragraph>
-        </section>
+        <Tabs
+          className="main-tabs"
+          defaultActiveKey="chat"
+          items={[
+            {
+              key: "chat",
+              label: "智能问答",
+              children: (
+                <Row gutter={[24, 24]}>
+                  <Col xs={24} lg={7}>
+                    <Card
+                      title="历史会话"
+                      className="panel-card"
+                      extra={
+                        <Button size="small" onClick={handleCreateConversation}>
+                          新建会话
+                        </Button>
+                      }
+                    >
+                      <List
+                        loading={loadingConversations}
+                        dataSource={conversations}
+                        locale={{ emptyText: "暂无会话，直接提问会自动创建" }}
+                        renderItem={(conversation) => (
+                          <List.Item
+                            className={
+                              activeConversationId === conversation.conversation_id
+                                ? "conversation-item active"
+                                : "conversation-item"
+                            }
+                            onClick={() => handleSelectConversation(conversation.conversation_id)}
+                          >
+                            <Space direction="vertical" size={2}>
+                              <Text strong>{conversation.title}</Text>
+                              <Text type="secondary">
+                                {new Date(conversation.updated_at).toLocaleString("zh-CN")}
+                              </Text>
+                            </Space>
+                          </List.Item>
+                        )}
+                      />
+                    </Card>
+                  </Col>
 
-        <Row gutter={[24, 24]}>
-          <Col xs={24} lg={8}>
-            <Card title="知识库配置" className="panel-card">
-              <Form layout="vertical">
-                <Form.Item label="知识库 ID">
-                  <Input
-                    value={kbId}
-                    onChange={(event) => setKbId(event.target.value || "default")}
-                    placeholder="default"
-                    prefix={<DatabaseOutlined />}
-                  />
-                </Form.Item>
-                <Alert
-                  type="info"
-                  showIcon
-                  message="MVP1 默认使用一个轻量知识库 ID"
-                  description="后续 MVP1.5 会增加知识库列表、文档列表、删除和重新索引。"
-                />
-              </Form>
+                  <Col xs={24} lg={17}>
+                    <Card
+                      title={
+                        <Space>
+                          <MessageOutlined />
+                          智能问答
+                        </Space>
+                      }
+                      className="panel-card"
+                    >
+                      <Alert
+                        className="chat-tip"
+                        type="info"
+                        showIcon
+                        message={`当前知识库：${kbId}`}
+                        description="可以新建会话、切换历史会话，并围绕当前会话继续追问。"
+                      />
 
-              <Divider />
+                      <List
+                        className="message-list"
+                        loading={loadingMessages}
+                        dataSource={conversationMessages}
+                        locale={{ emptyText: "当前会话暂无消息" }}
+                        renderItem={(item) => (
+                          <List.Item className={`chat-message ${item.role}`}>
+                            <Card className="answer-card">
+                              <Space direction="vertical" size={8}>
+                                <Tag color={item.role === "user" ? "blue" : "green"}>
+                                  {item.role === "user" ? "用户" : "助手"}
+                                </Tag>
+                                <Paragraph>{item.content}</Paragraph>
+                                {item.role === "assistant" && renderSources(item.sources)}
+                              </Space>
+                            </Card>
+                          </List.Item>
+                        )}
+                      />
 
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Statistic title="已上传文档" value={uploadedDocs.length} />
-                </Col>
-                <Col span={12}>
-                  <Statistic
-                    title="最新片段数"
-                    value={uploadedDocs[0]?.chunk_count ?? 0}
-                  />
-                </Col>
-              </Row>
-            </Card>
-
-            <Card title="文档上传" className="panel-card">
-              <Upload.Dragger {...uploadProps} disabled={uploading}>
-                <p className="ant-upload-drag-icon">
-                  <CloudUploadOutlined />
-                </p>
-                <p className="ant-upload-text">点击或拖拽文档到这里</p>
-                <p className="ant-upload-hint">MVP1 当前支持 TXT、Markdown</p>
-              </Upload.Dragger>
-
-              <List
-                className="doc-list"
-                size="small"
-                dataSource={uploadedDocs}
-                locale={{ emptyText: "暂无上传记录" }}
-                renderItem={(doc) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      title={doc.filename}
-                      description={`doc_id: ${doc.doc_id} · chunks: ${doc.chunk_count}`}
-                    />
-                  </List.Item>
-                )}
-              />
-            </Card>
-          </Col>
-
-          <Col xs={24} lg={16}>
-            <Card
-              title={
-                <Space>
-                  <MessageOutlined />
-                  智能问答
-                </Space>
-              }
-              className="panel-card"
-            >
-              <Form layout="vertical">
-                <Form.Item label="问题">
-                  <Input.TextArea
-                    rows={4}
-                    value={question}
-                    onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="请输入要查询的问题"
-                  />
-                </Form.Item>
-                <Space>
-                  <Text>Top K</Text>
-                  <InputNumber min={1} max={20} value={topK} onChange={(value) => setTopK(value ?? 5)} />
-                  <Button type="primary" loading={asking} onClick={handleAsk}>
-                    开始问答
-                  </Button>
-                </Space>
-              </Form>
-
-              {chatResult && (
-                <div className="answer-section">
-                  <Title level={4}>回答</Title>
-                  <Card className="answer-card">
-                    <Paragraph>{chatResult.answer}</Paragraph>
+                      <Form layout="vertical">
+                        <Form.Item label="问题">
+                          <Input.TextArea
+                            rows={4}
+                            value={question}
+                            onChange={(event) => setQuestion(event.target.value)}
+                            placeholder="请输入要查询的问题"
+                          />
+                        </Form.Item>
+                        <Space>
+                          <Text>Top K</Text>
+                          <InputNumber
+                            min={1}
+                            max={20}
+                            value={topK}
+                            onChange={(value) => setTopK(value ?? 5)}
+                          />
+                          <Button type="primary" loading={asking} onClick={handleAsk}>
+                            发送
+                          </Button>
+                        </Space>
+                      </Form>
+                    </Card>
+                  </Col>
+                </Row>
+              ),
+            },
+            {
+              key: "documents",
+              label: "文档管理",
+              children: (
+                <>
+                  <Card title="文档管理" className="panel-card">
+                    <Row gutter={[24, 16]} align="middle">
+                      <Col xs={12} md={6}>
+                        <Statistic title="当前知识库" value={kbId} />
+                      </Col>
+                      <Col xs={12} md={6}>
+                        <Statistic title="文档总数" value={documents.length} />
+                      </Col>
+                      <Col xs={12} md={6}>
+                        <Statistic
+                          title="已完成索引"
+                          value={documents.filter((doc) => doc.status === "completed").length}
+                        />
+                      </Col>
+                      <Col xs={24} md={6}>
+                        <Button
+                          icon={<ReloadOutlined />}
+                          loading={loadingDocuments}
+                          onClick={refreshDocuments}
+                        >
+                          刷新列表
+                        </Button>
+                      </Col>
+                    </Row>
                   </Card>
 
-                  <Title level={4}>引用来源</Title>
-                  <List
-                    dataSource={chatResult.sources}
-                    locale={{ emptyText: "本次回答没有返回引用来源" }}
-                    renderItem={(source) => (
-                      <List.Item>
-                        <Card className="source-card">
-                          <Space direction="vertical" size={8}>
-                            <Space wrap>
-                              <Tag color="blue">{source.filename}</Tag>
-                              <Tag>chunk #{source.chunk_index}</Tag>
-                              <Tag color="green">score {source.score.toFixed(4)}</Tag>
-                            </Space>
-                            <Paragraph ellipsis={{ rows: 5, expandable: true }}>
-                              {source.content}
-                            </Paragraph>
-                          </Space>
-                        </Card>
-                      </List.Item>
-                    )}
-                  />
-                </div>
-              )}
-            </Card>
-          </Col>
-        </Row>
+                  <Row gutter={[24, 24]}>
+                    <Col xs={24} lg={8}>
+                      <Card title="文档上传" className="panel-card">
+                        <Upload.Dragger {...uploadProps} disabled={uploading}>
+                          <p className="ant-upload-drag-icon">
+                            <CloudUploadOutlined />
+                          </p>
+                          <p className="ant-upload-text">
+                            {uploading ? "正在上传文档" : "点击或拖拽文档到这里"}
+                          </p>
+                          <p className="ant-upload-hint">当前支持 TXT、Markdown</p>
+                        </Upload.Dragger>
+
+                        <Alert
+                          className="upload-tip"
+                          type="info"
+                          showIcon
+                          message="上传后会立即解析、切分并写入 Qdrant"
+                          description="索引失败的文档也会保留在列表中，便于查看失败原因。"
+                        />
+                      </Card>
+                    </Col>
+
+                    <Col xs={24} lg={16}>
+                      <Card title="文档列表" className="panel-card">
+                        <Table<DocumentRecord>
+                          rowKey="doc_id"
+                          loading={loadingDocuments}
+                          columns={documentColumns}
+                          dataSource={documents}
+                          pagination={{ pageSize: 8 }}
+                          scroll={{ x: 860 }}
+                        />
+                      </Card>
+                    </Col>
+                  </Row>
+                </>
+              ),
+            },
+          ]}
+        />
       </Content>
     </Layout>
   );

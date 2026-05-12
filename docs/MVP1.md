@@ -19,6 +19,15 @@ MVP1 是 KB Copilot 的完整体验版，目标是提供一个可本地启动、
 - 支持 mock Embedding 和 mock LLM，方便无 API Key 时做本地冒烟测试。
 - 支持 Docker Compose 启动前端、后端和 Qdrant。
 
+## MVP1 实现核对
+
+- 已实现 Web 页面上传文档、配置知识库 ID、发起问答和展示引用来源。
+- 已实现后端健康检查、文档上传和问答接口。
+- 已实现 Markdown、TXT 文档解析和 LangChain 文本切分。
+- 已实现 OpenAI-compatible Embedding / LLM 调用，并提供 mock 模式用于本地冒烟测试。
+- 已实现 Qdrant 向量写入、按知识库 ID 过滤检索和 Top-K 召回。
+- 已实现 Docker Compose 编排前端、后端和 Qdrant。
+
 ## RAG 流程
 
 ```text
@@ -110,7 +119,7 @@ LLM_PROVIDER=mock
 
 ## 下一版本改进
 
-下一版本为 MVP1.5，重点从“可演示”升级为“轻量可用”：
+下一版本为 MVP2，重点从“可演示”升级为“轻量可用”：
 
 - 将文档上传/管理页和智能问答页拆分，避免上传流程和问答流程互相干扰。
 - 增加文档列表，展示文件名、chunk 数、上传时间、索引状态和失败原因。
