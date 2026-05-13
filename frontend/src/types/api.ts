@@ -24,12 +24,15 @@ export interface Source {
   chunk_index: number;
   score: number;
   content: string;
+  source_type?: string;  // "vector" | "keyword" | "fusion"
 }
 
 export interface ChatResponse {
   conversation_id: string;
   answer: string;
   sources: Source[];
+  intent?: string;
+  tool_result?: Record<string, unknown>;
 }
 
 export interface ConversationRecord {

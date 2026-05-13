@@ -72,6 +72,20 @@ export function createConversation(kbId: string, title?: string) {
   );
 }
 
+export function deleteConversation(kbId: string, conversationId: string): Promise<void> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+  return fetch(
+    `${baseUrl}/api/v1/kbs/${encodeURIComponent(kbId)}/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE" },
+  ).then((response) => {
+    if (!response.ok) {
+      return response.json().then((err) => {
+        throw new Error(typeof err.detail === "string" ? err.detail : response.statusText);
+      });
+    }
+  });
+}
+
 export function listConversationMessages(kbId: string, conversationId: string) {
   return request<ConversationMessagesResponse>(
     `/api/v1/kbs/${encodeURIComponent(kbId)}/conversations/${encodeURIComponent(
@@ -96,6 +110,117 @@ export function askQuestion(
       body: JSON.stringify({ question, top_k: topK, conversation_id: conversationId }),
     },
   );
+}
+
+export interface SSEEvent {
+  event: string;
+  data: string;
+}
+
+export function askQuestionStream(
+  kbId: string,
+  question: string,
+  topK: number,
+  conversationId: string | null | undefined,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+  const url = `${baseUrl}/api/v1/kbs/${encodeURIComponent(kbId)}/chat/stream`;
+
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question,
+      top_k: topK,
+      conversation_id: conversationId,
+    }),
+    signal,
+  }).then((response) => {
+    if (!response.ok) {
+      return response.json().then((err) => {
+        throw new Error(typeof err.detail === "string" ? err.detail : response.statusText);
+      });
+    }
+    if (!response.body) {
+      throw new Error("ReadableStream not supported");
+    }
+    return response.body;
+  });
+}
+
+export function getSuggestions(
+  kbId: string,
+  question: string,
+  answer: string,
+  conversationId: string | null | undefined,
+): Promise<{ suggestions: string[] }> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+  return fetch(
+    `${baseUrl}/api/v1/kbs/${encodeURIComponent(kbId)}/suggestions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, answer, conversation_id: conversationId }),
+    },
+  ).then((response) => {
+    if (!response.ok) {
+      return response.json().then((err) => {
+        throw new Error(typeof err.detail === "string" ? err.detail : response.statusText);
+      });
+    }
+    return response.json();
+  });
+}
+
+export function submitFeedback(
+  kbId: string,
+  messageId: string,
+  rating: "helpful" | "not_helpful",
+): Promise<{ message: string }> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+  return fetch(
+    `${baseUrl}/api/v1/kbs/${encodeURIComponent(kbId)}/feedback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message_id: messageId, rating }),
+    },
+  ).then((response) => {
+    if (!response.ok) {
+      return response.json().then((err) => {
+        throw new Error(typeof err.detail === "string" ? err.detail : response.statusText);
+      });
+    }
+    return response.json();
+  });
+}
+
+export function regenerateAnswer(
+  kbId: string,
+  conversationId: string,
+  topK: number,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+  const url = `${baseUrl}/api/v1/kbs/${encodeURIComponent(kbId)}/chat/${encodeURIComponent(conversationId)}/regenerate`;
+
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ top_k: topK }),
+    signal,
+  }).then((response) => {
+    if (!response.ok) {
+      return response.json().then((err) => {
+        throw new Error(typeof err.detail === "string" ? err.detail : response.statusText);
+      });
+    }
+    if (!response.body) {
+      throw new Error("ReadableStream not supported");
+    }
+    return response.body;
+  });
 }
 
 export function healthCheck() {

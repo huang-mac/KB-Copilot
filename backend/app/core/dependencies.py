@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.core.config import Settings, get_settings
+from app.graph.graph import build_graph
 from app.integrations.embedding import create_embedding_client
 from app.integrations.llm import create_llm_client
 from app.integrations.minio_storage import MinioDocumentStorage
@@ -11,6 +12,15 @@ from app.services.document_index_service import DocumentIndexService
 from app.services.document_loader import DocumentLoader
 from app.services.rag_service import RAGService
 from app.services.text_splitter import TextSplitter
+from app.tools.business_tools import (
+    QueryInventoryTool,
+    QueryInvoiceStatusTool,
+    QueryMaterialPriceTool,
+    QueryOrderStatusTool,
+    QueryPurchasePlanTool,
+    QueryWmsTaskStatusTool,
+)
+from app.tools.registry import ToolRegistry
 
 
 @lru_cache
@@ -62,4 +72,32 @@ def get_rag_service() -> RAGService:
         embedding_client=create_embedding_client(settings),
         vector_store=get_vector_store(),
         llm_client=create_llm_client(settings),
+    )
+
+
+@lru_cache
+def get_llm_client():
+    settings = get_settings()
+    return create_llm_client(settings)
+
+
+@lru_cache
+def get_tool_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(QueryInventoryTool())
+    registry.register(QueryOrderStatusTool())
+    registry.register(QueryMaterialPriceTool())
+    registry.register(QueryWmsTaskStatusTool())
+    registry.register(QueryPurchasePlanTool())
+    registry.register(QueryInvoiceStatusTool())
+    return registry
+
+
+def get_graph():
+    """返回已组装的 LangGraph 图（每次请求新建，不缓存编译产物）。"""
+    settings = get_settings()
+    return build_graph(
+        rag_service=get_rag_service(),
+        llm_client=create_llm_client(settings),
+        tool_registry=get_tool_registry(),
     )

@@ -7,6 +7,16 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
+class ChatStreamRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    conversation_id: str | None = None
+
+
+class RegenerateRequest(BaseModel):
+    top_k: int | None = Field(default=None, ge=1, le=20)
+
+
 class Source(BaseModel):
     doc_id: str
     filename: str
@@ -19,3 +29,5 @@ class ChatResponse(BaseModel):
     conversation_id: str
     answer: str
     sources: list[Source]
+    intent: str | None = None
+    tool_result: dict | None = None

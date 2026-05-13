@@ -52,14 +52,9 @@ KB Copilot 是面向中小企业的智能知识库问答助手，当前核心能
 
 - MVP1：`.claude/specs/mvp1/`
 - MVP2：`.claude/specs/mvp2/`
-
-MVP3 新能力应优先拆成独立 spec，例如：
-
-- `.claude/specs/mvp3/`
-- `.claude/specs/intent-routing/`
-- `.claude/specs/hybrid-search/`
-- `.claude/specs/async-indexing/`
-- `.claude/specs/sse-streaming/`
+- MVP3：`.claude/specs/mvp3/`（spec/plan/tasks 已就绪，待实现）
+- 意图路由：`.claude/specs/intent-routing/`
+- SSE 流式：`.claude/specs/sse-streaming/`
 
 ## 技术栈
 

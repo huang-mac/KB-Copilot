@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+
 from app.domain.chunks import RetrievedChunk
 from app.integrations.embedding import EmbeddingClient
 from app.integrations.llm import LLMClient
@@ -27,7 +29,9 @@ class RAGService:
         history_text = self._build_history(history or [])
         query_text = "\n".join([history_text, question]).strip()
         query_vector = await self.embedding_client.embed_query(query_text)
-        sources = self.vector_store.search(kb_id=kb_id, query_vector=query_vector, top_k=top_k)
+        sources = self.vector_store.hybrid_search(
+            kb_id=kb_id, query=query_text, query_vector=query_vector, top_k=top_k,
+        )
         context = self._build_context(sources)
         answer = await self.llm_client.generate_answer(
             question=question,
@@ -35,6 +39,33 @@ class RAGService:
             history=history_text,
         )
         return answer, sources
+
+    async def answer_stream(
+        self,
+        *,
+        kb_id: str,
+        question: str,
+        top_k: int,
+        history: list[tuple[str, str]] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        history_text = self._build_history(history or [])
+        query_text = "\n".join([history_text, question]).strip()
+        query_vector = await self.embedding_client.embed_query(query_text)
+        sources = self.vector_store.hybrid_search(
+            kb_id=kb_id, query=query_text, query_vector=query_vector, top_k=top_k,
+        )
+        context = self._build_context(sources)
+
+        yield {"type": "sources", "data": sources}
+
+        async for token in self.llm_client.astream_answer(
+            question=question,
+            context=context,
+            history=history_text,
+        ):
+            yield {"type": "token", "data": token}
+
+        yield {"type": "done", "data": None}
 
     def _build_history(self, history: list[tuple[str, str]]) -> str:
         recent_history = history[-8:]
@@ -52,6 +83,8 @@ class RAGService:
                     [
                         f"来源文件：{source.filename}",
                         f"片段序号：{source.chunk_index}",
+                        f"检索方式：{source.source_type}",
+                        f"相关度：{source.score:.4f}",
                         f"内容：{source.content}",
                     ]
                 )

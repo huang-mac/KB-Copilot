@@ -20,3 +20,4 @@ class RetrievedChunk:
     chunk_index: int
     content: str
     score: float
+    source_type: str = "vector"  # "vector" | "keyword" | "fusion"

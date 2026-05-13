@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.dependencies import get_conversation_repository
 from app.core.exceptions import KBError
@@ -69,6 +69,23 @@ async def list_messages(
     return ConversationMessagesResponse(
         messages=[_to_message_response(message) for message in messages]
     )
+
+
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(
+    kb_id: str,
+    conversation_id: str,
+    conversation_repository: Annotated[
+        ConversationRepository,
+        Depends(get_conversation_repository),
+    ],
+) -> None:
+    deleted = conversation_repository.delete_conversation(
+        kb_id=kb_id,
+        conversation_id=conversation_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
 
 
 def _to_conversation_response(conversation: ConversationRecord) -> ConversationResponse:

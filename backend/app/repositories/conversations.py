@@ -118,11 +118,30 @@ class ConversationRepository:
                 SELECT kb_id, conversation_id, message_id, role, content, sources, created_at
                 FROM conversation_messages
                 WHERE kb_id = ? AND conversation_id = ?
-                ORDER BY datetime(created_at) ASC
+                ORDER BY datetime(created_at) ASC, rowid ASC
                 """,
                 (kb_id, conversation_id),
             ).fetchall()
         return [self._message_from_row(row) for row in rows]
+
+    def delete_conversation(self, *, kb_id: str, conversation_id: str) -> bool:
+        """删除会话及其所有消息。返回 True 表示删除成功，False 表示会话不存在。"""
+        with self._connect() as connection, self._lock:
+            cursor = connection.execute(
+                "SELECT 1 FROM conversations WHERE kb_id = ? AND conversation_id = ?",
+                (kb_id, conversation_id),
+            )
+            if cursor.fetchone() is None:
+                return False
+            connection.execute(
+                "DELETE FROM conversation_messages WHERE kb_id = ? AND conversation_id = ?",
+                (kb_id, conversation_id),
+            )
+            connection.execute(
+                "DELETE FROM conversations WHERE kb_id = ? AND conversation_id = ?",
+                (kb_id, conversation_id),
+            )
+        return True
 
     def _ensure_schema(self) -> None:
         with self._connect() as connection:
