@@ -70,6 +70,9 @@ class DocumentRepository:
         return self._record_from_row(row) if row else None
 
     def mark_indexing(self, *, kb_id: str, doc_id: str) -> None:
+        self.update_status(kb_id=kb_id, doc_id=doc_id, status="processing")
+
+    def update_status(self, *, kb_id: str, doc_id: str, status: DocumentStatus) -> None:
         with self._connect() as connection, self._lock:
             connection.execute(
                 """
@@ -77,7 +80,7 @@ class DocumentRepository:
                 SET chunk_count = 0, status = ?, error_message = NULL
                 WHERE kb_id = ? AND doc_id = ?
                 """,
-                ("indexing", kb_id, doc_id),
+                (status, kb_id, doc_id),
             )
 
     def mark_completed(self, *, kb_id: str, doc_id: str, chunk_count: int) -> None:

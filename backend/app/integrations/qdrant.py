@@ -130,30 +130,67 @@ class QdrantVectorStore:
     def hybrid_search(
         self, *, kb_id: str, query: str, query_vector: list[float], top_k: int
     ) -> list[RetrievedChunk]:
-        """使用 Qdrant 原生 fusion 做向量 + 关键词混合检索 + RRF 融合。
+        """向量检索 + 关键词检索 + 本地 RRF 融合。
 
-        两路 prefetch：
-        - 向量路：用 embedding 向量做语义召回
-        - 关键词路：用 content 字段的全文索引做关键词匹配
-        Qdrant 内置 RRF 融合两路结果。
+        不同 qdrant-client 版本的原生 text query API 差异较大；这里使用稳定的
+        `MatchText` filter 做关键词召回，再在应用层执行 RRF，避免依赖 QueryText。
         """
+        vector_results = self.search(kb_id=kb_id, query_vector=query_vector, top_k=top_k * 2)
+        keyword_results = self.keyword_search(kb_id=kb_id, query=query, top_k=top_k * 2)
+        return self._rrf_fuse(
+            result_sets=[vector_results, keyword_results],
+            top_k=top_k,
+        )
+
+    def keyword_search(self, *, kb_id: str, query: str, top_k: int) -> list[RetrievedChunk]:
         self.ensure_collection()
-        response = self.client.query_points(
+        query = query.strip()
+        if not query:
+            return []
+
+        try:
+            points, _next_page = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="kb_id",
+                            match=models.MatchValue(value=kb_id),
+                        ),
+                        models.FieldCondition(
+                            key="content",
+                            match=models.MatchText(text=query),
+                        ),
+                    ]
+                ),
+                limit=top_k,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception:
+            points = self._contains_keyword_search(kb_id=kb_id, query=query, top_k=top_k)
+
+        retrieved: list[RetrievedChunk] = []
+        for rank, point in enumerate(points, start=1):
+            payload = point.payload or {}
+            retrieved.append(
+                RetrievedChunk(
+                    id=str(point.id),
+                    kb_id=str(payload.get("kb_id", "")),
+                    doc_id=str(payload.get("doc_id", "")),
+                    filename=str(payload.get("filename", "")),
+                    chunk_index=int(payload.get("chunk_index", 0)),
+                    content=str(payload.get("content", "")),
+                    score=1.0 / rank,
+                    source_type="keyword",
+                )
+            )
+        return retrieved
+
+    def _contains_keyword_search(self, *, kb_id: str, query: str, top_k: int) -> list:
+        points, _next_page = self.client.scroll(
             collection_name=self.collection_name,
-            prefetch=[
-                models.Prefetch(
-                    query=query_vector,
-                    limit=top_k * 2,
-                ),
-                models.Prefetch(
-                    query=models.Query(
-                        text=models.QueryText(text=query),
-                    ),
-                    limit=top_k * 2,
-                ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            query_filter=models.Filter(
+            scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
                         key="kb_id",
@@ -161,23 +198,56 @@ class QdrantVectorStore:
                     )
                 ]
             ),
-            limit=top_k,
+            limit=max(top_k * 10, 50),
             with_payload=True,
+            with_vectors=False,
         )
+        terms = [term.lower() for term in query.split() if term.strip()]
+        if not terms:
+            terms = [query.lower()]
+        matched = []
+        for point in points:
+            payload = point.payload or {}
+            content = str(payload.get("content", "")).lower()
+            if any(term in content for term in terms):
+                matched.append(point)
+                if len(matched) >= top_k:
+                    break
+        return matched
 
-        retrieved: list[RetrievedChunk] = []
-        for result in response.points:
-            payload = result.payload or {}
-            retrieved.append(
+    def _rrf_fuse(
+        self,
+        *,
+        result_sets: list[list[RetrievedChunk]],
+        top_k: int,
+        rank_constant: int = 60,
+    ) -> list[RetrievedChunk]:
+        scores: dict[str, float] = {}
+        chunks: dict[str, RetrievedChunk] = {}
+        source_types: dict[str, set[str]] = {}
+
+        for results in result_sets:
+            for rank, chunk in enumerate(results, start=1):
+                scores[chunk.id] = scores.get(chunk.id, 0.0) + 1.0 / (rank_constant + rank)
+                chunks[chunk.id] = chunk
+                source_types.setdefault(chunk.id, set()).add(chunk.source_type)
+
+        fused_ids = sorted(scores, key=scores.get, reverse=True)[:top_k]
+        fused: list[RetrievedChunk] = []
+        for chunk_id in fused_ids:
+            chunk = chunks[chunk_id]
+            sources = source_types.get(chunk_id, set())
+            source_type = "fusion" if len(sources) > 1 else next(iter(sources), "fusion")
+            fused.append(
                 RetrievedChunk(
-                    id=str(result.id),
-                    kb_id=str(payload.get("kb_id", "")),
-                    doc_id=str(payload.get("doc_id", "")),
-                    filename=str(payload.get("filename", "")),
-                    chunk_index=int(payload.get("chunk_index", 0)),
-                    content=str(payload.get("content", "")),
-                    score=float(result.score),
-                    source_type="fusion",
+                    id=chunk.id,
+                    kb_id=chunk.kb_id,
+                    doc_id=chunk.doc_id,
+                    filename=chunk.filename,
+                    chunk_index=chunk.chunk_index,
+                    content=chunk.content,
+                    score=scores[chunk_id],
+                    source_type=source_type,
                 )
             )
-        return retrieved
+        return fused

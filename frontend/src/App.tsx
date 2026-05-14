@@ -1,6 +1,7 @@
 import {
   CloudUploadOutlined,
   DeleteOutlined,
+  DashboardOutlined,
   LoadingOutlined,
   MessageOutlined,
   ReloadOutlined,
@@ -29,6 +30,7 @@ import {
   Upload,
 } from "antd";
 import type { TableProps, UploadProps } from "antd";
+import type { TextAreaRef } from "antd/es/input/TextArea";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
@@ -37,6 +39,8 @@ import {
   createConversation,
   deleteConversation,
   deleteDocument,
+  getIndexJob,
+  getMetrics,
   healthCheck,
   listConversationMessages,
   listConversations,
@@ -49,7 +53,14 @@ import { FeedbackButtons } from "./components/FeedbackButtons";
 import { SourcePopover } from "./components/SourcePopover";
 import { useAutoScroll } from "./hooks/useAutoScroll";
 import { useChatStream } from "./hooks/useChatStream";
-import type { ConversationMessage, ConversationRecord, DocumentRecord, Source } from "./types/api";
+import type {
+  ConversationMessage,
+  ConversationRecord,
+  DocumentRecord,
+  MetricsResponse,
+  Source,
+  TimingMetric,
+} from "./types/api";
 
 const { Header, Content } = Layout;
 const { Paragraph, Text } = Typography;
@@ -72,7 +83,17 @@ function App() {
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
   const [lastResponseIntent, setLastResponseIntent] = useState<string | null>(null);
   const [lastResponseToolResult, setLastResponseToolResult] = useState<Record<string, unknown> | null>(null);
+  const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [messageDurations, setMessageDurations] = useState<Record<string, number>>({});
   const streamQuestionRef = useRef<string>("");
+  const pendingUserMessageIdRef = useRef<string | null>(null);
+  const streamStoppedByUserRef = useRef(false);
+  const latestStreamRef = useRef<{ tokens: string[]; sources: Source[] | null }>({
+    tokens: [],
+    sources: null,
+  });
+  const questionInputRef = useRef<TextAreaRef>(null);
 
   const {
     state: streamState,
@@ -89,50 +110,21 @@ function App() {
   }, []);
 
   useEffect(() => {
+    questionInputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     void refreshDocuments();
     void refreshConversations();
+    void refreshMetrics();
   }, [kbId]);
 
-  // When streaming completes, append messages locally (no flash)
   useEffect(() => {
-    if (streamState.status === "done" && streamState.conversationId) {
-      const convId = streamState.conversationId;
-      const question = streamQuestionRef.current;
-      const answer = streamState.tokens.join("");
-      const sources = streamState.sources;
-
-      // Append messages to local state — only add user message for new questions
-      if (answer) {
-        const now = new Date().toISOString();
-        const msgs: ConversationMessage[] = [];
-        if (question) {
-          msgs.push({
-            kb_id: kbId,
-            conversation_id: convId,
-            message_id: crypto.randomUUID?.() || `${Date.now()}-user`,
-            role: "user",
-            content: question,
-            created_at: now,
-          });
-        }
-        msgs.push({
-          kb_id: kbId,
-          conversation_id: convId,
-          message_id: crypto.randomUUID?.() || `${Date.now()}-assistant`,
-          role: "assistant",
-          content: answer,
-          sources: sources ?? undefined,
-          created_at: now,
-        });
-        setConversationMessages((prev) => [...prev, ...msgs]);
-      }
-
-      setActiveConversationId(convId);
-      refreshConversations();
-      resetStream();
-      streamQuestionRef.current = "";
-    }
-  }, [streamState.status, streamState.conversationId]);
+    latestStreamRef.current = {
+      tokens: streamState.tokens,
+      sources: streamState.sources,
+    };
+  }, [streamState.tokens, streamState.sources]);
 
   async function refreshDocuments() {
     setLoadingDocuments(true);
@@ -160,6 +152,18 @@ function App() {
       message.error(error instanceof Error ? error.message : "加载会话列表失败");
     } finally {
       setLoadingConversations(false);
+    }
+  }
+
+  async function refreshMetrics() {
+    setLoadingMetrics(true);
+    try {
+      const result = await getMetrics();
+      setMetrics(result);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "加载监控指标失败");
+    } finally {
+      setLoadingMetrics(false);
     }
   }
 
@@ -219,7 +223,12 @@ function App() {
         try {
           const result = await uploadDocument(kbId, file);
           await refreshDocuments();
-          message.success(`已索引 ${result.filename}，共 ${result.chunk_count} 个片段`);
+          if (result.job_id) {
+            message.success(`${result.filename} 已进入索引队列`);
+            void pollIndexJob(result.job_id);
+          } else {
+            message.success(`已索引 ${result.filename}，共 ${result.chunk_count} 个片段`);
+          }
         } catch (error) {
           message.error(error instanceof Error ? error.message : "上传失败");
           await refreshDocuments();
@@ -229,11 +238,31 @@ function App() {
         return false;
       },
       maxCount: 1,
-      accept: ".txt,.md,.markdown",
+      accept: ".txt,.md,.markdown,.pdf,.docx",
       showUploadList: false,
     }),
     [kbId],
   );
+
+  async function pollIndexJob(jobId: string) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try {
+        const job = await getIndexJob(kbId, jobId);
+        await refreshDocuments();
+        if (job.status === "completed") {
+          message.success(`${job.filename} 索引完成`);
+          return;
+        }
+        if (job.status === "failed") {
+          message.error(job.error_message || `${job.filename} 索引失败`);
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+  }
 
   async function handleDeleteDocument(docId: string) {
     setDeletingDocId(docId);
@@ -301,38 +330,122 @@ function App() {
     setQuestion("");
 
     const currentQuestion = question.trim();
+    const currentConversationId = activeConversationId;
     streamQuestionRef.current = currentQuestion;
-    await startStream(currentQuestion, topK, activeConversationId);
-    console.log("[App] startStream completed, final status:", streamState.status);
-    setAsking(false);
+    const pendingMessageId = crypto.randomUUID?.() || `${Date.now()}-user`;
+    pendingUserMessageIdRef.current = pendingMessageId;
+    setConversationMessages((prev) => [
+      ...prev,
+      {
+        kb_id: kbId,
+        conversation_id: currentConversationId ?? "__pending__",
+        message_id: pendingMessageId,
+        role: "user",
+        content: currentQuestion,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    try {
+      streamStoppedByUserRef.current = false;
+      const startedAt = performance.now();
+      const result = await startStream(currentQuestion, topK, currentConversationId);
+      const durationMs = performance.now() - startedAt;
+      const answer = result.tokens.join("");
+
+      if (result.status === "done" && result.conversationId && answer) {
+        const convId = result.conversationId;
+        const pendingUserMessageId = pendingUserMessageIdRef.current;
+        const assistantMsg: ConversationMessage = {
+          kb_id: kbId,
+          conversation_id: convId,
+          message_id: crypto.randomUUID?.() || `${Date.now()}-assistant`,
+          role: "assistant",
+          content: answer,
+          sources: result.sources ?? undefined,
+          created_at: new Date().toISOString(),
+        };
+        setMessageDurations((prev) => ({
+          ...prev,
+          [assistantMsg.message_id]: durationMs,
+        }));
+        setConversationMessages((prev) =>
+          prev.map((item) =>
+            item.message_id === pendingUserMessageId
+              ? { ...item, conversation_id: convId }
+              : item,
+          ).concat(assistantMsg),
+        );
+        setActiveConversationId(convId);
+        await refreshConversations();
+      } else if (answer && !streamStoppedByUserRef.current) {
+        const assistantMsg: ConversationMessage = {
+          kb_id: kbId,
+          conversation_id: currentConversationId ?? "__pending__",
+          message_id: crypto.randomUUID?.() || `${Date.now()}-assistant`,
+          role: "assistant",
+          content: answer + (result.status === "aborted" ? " [已中断]" : ""),
+          sources: result.sources ?? undefined,
+          created_at: new Date().toISOString(),
+        };
+        setMessageDurations((prev) => ({
+          ...prev,
+          [assistantMsg.message_id]: durationMs,
+        }));
+        setConversationMessages((prev) => [...prev, assistantMsg]);
+      } else if (result.status === "error") {
+        const assistantMsg: ConversationMessage = {
+          kb_id: kbId,
+          conversation_id: currentConversationId ?? "__pending__",
+          message_id: crypto.randomUUID?.() || `${Date.now()}-assistant-error`,
+          role: "assistant",
+          content: result.error || "流式回答失败，请稍后重试。",
+          created_at: new Date().toISOString(),
+        };
+        setConversationMessages((prev) => [...prev, assistantMsg]);
+        message.error(result.error || "流式回答失败");
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "问答失败");
+    } finally {
+      void refreshMetrics();
+      resetStream();
+      streamQuestionRef.current = "";
+      pendingUserMessageIdRef.current = null;
+      setAsking(false);
+    }
+  }
+
+  function handleQuestionKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    if (!isStreaming && !asking) {
+      void handleAskStream();
+    }
   }
 
   async function handleStopStream() {
     stopStream();
+    streamStoppedByUserRef.current = true;
     setAsking(false);
     // Append partial message locally to avoid reload flash
-    if (streamState.tokens.length > 0 && activeConversationId) {
+    const interruptedAnswer = latestStreamRef.current.tokens.join("");
+    if (interruptedAnswer && activeConversationId) {
       const now = new Date().toISOString();
-      const userMsg: ConversationMessage = {
-        kb_id: kbId,
-        conversation_id: activeConversationId,
-        message_id: crypto.randomUUID?.() || `${Date.now()}-user`,
-        role: "user",
-        content: streamQuestionRef.current,
-        created_at: now,
-      };
       const assistantMsg: ConversationMessage = {
         kb_id: kbId,
         conversation_id: activeConversationId,
         message_id: crypto.randomUUID?.() || `${Date.now()}-assistant`,
         role: "assistant",
-        content: streamState.tokens.join("") + " [已中断]",
-        sources: streamState.sources ?? undefined,
+        content: interruptedAnswer + " [已中断]",
+        sources: latestStreamRef.current.sources ?? undefined,
         created_at: now,
       };
-      setConversationMessages((prev) => [...prev, userMsg, assistantMsg]);
-      streamQuestionRef.current = "";
+      setConversationMessages((prev) => [...prev, assistantMsg]);
     }
+    streamQuestionRef.current = "";
+    pendingUserMessageIdRef.current = null;
     await refreshConversations();
   }
 
@@ -353,6 +466,16 @@ function App() {
         <ReactMarkdown>{content}</ReactMarkdown>
       </div>
     );
+  }
+
+  function formatDuration(ms: number) {
+    if (!Number.isFinite(ms)) {
+      return "-";
+    }
+    if (ms < 1000) {
+      return `${Math.round(ms)} ms`;
+    }
+    return `${(ms / 1000).toFixed(2)} s`;
   }
 
   const isStreaming = streamState.status === "streaming";
@@ -387,6 +510,8 @@ function App() {
       dataIndex: "status",
       render: (status: DocumentRecord["status"]) => {
         const statusMap = {
+          queued: { color: "default", text: "排队中" },
+          processing: { color: "processing", text: "索引中" },
           indexing: { color: "processing", text: "索引中" },
           completed: { color: "success", text: "已完成" },
           failed: { color: "error", text: "失败" },
@@ -417,7 +542,12 @@ function App() {
             type="link"
             icon={<ReloadOutlined />}
             loading={reindexingDocId === record.doc_id}
-            disabled={record.status === "indexing" || deletingDocId === record.doc_id}
+          disabled={
+            record.status === "queued" ||
+            record.status === "processing" ||
+            record.status === "indexing" ||
+            deletingDocId === record.doc_id
+          }
             onClick={() => handleReindexDocument(record.doc_id)}
           >
             重新索引
@@ -441,6 +571,47 @@ function App() {
           </Popconfirm>
         </Space>
       ),
+    },
+  ];
+
+  const timingRows = useMemo(
+    () => Object.entries(metrics?.timings ?? {}).map(([name, value]) => ({
+      key: name,
+      name,
+      ...value,
+    })),
+    [metrics],
+  );
+
+  const timingColumns: TableProps<TimingMetric & { key: string; name: string }>["columns"] = [
+    {
+      title: "指标",
+      dataIndex: "name",
+      render: (name: string) => <Text code>{name}</Text>,
+    },
+    {
+      title: "次数",
+      dataIndex: "count",
+      align: "right",
+      width: 100,
+    },
+    {
+      title: "平均耗时",
+      dataIndex: "avg_ms",
+      align: "right",
+      render: (value: number) => formatDuration(value),
+    },
+    {
+      title: "P95",
+      dataIndex: "p95_ms",
+      align: "right",
+      render: (value: number) => formatDuration(value),
+    },
+    {
+      title: "最大耗时",
+      dataIndex: "max_ms",
+      align: "right",
+      render: (value: number) => formatDuration(value),
     },
   ];
 
@@ -549,11 +720,9 @@ function App() {
                           renderItem={(item) => (
                             <List.Item className={`chat-message ${item.role}`}>
                               <Card className="answer-card">
-                                <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                                  <Space>
-                                    <Tag color={item.role === "user" ? "blue" : "green"}>
-                                      {item.role === "user" ? "用户" : "助手"}
-                                    </Tag>
+                                <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                  {item.role === "assistant" && (
+                                  <Space className="message-actions">
                                     {item.role === "assistant" && (
                                       <Button
                                         size="small"
@@ -574,8 +743,9 @@ function App() {
                                       <FeedbackButtons kbId={kbId} messageId={item.message_id} />
                                     )}
                                   </Space>
+                                  )}
                                   {item.role === "user"
-                                    ? <Paragraph>{item.content}</Paragraph>
+                                    ? <Paragraph className="user-message-text">{item.content}</Paragraph>
                                     : (item.content
                                       ? renderMessageContent(item.content)
                                       : <Alert type="info" showIcon message="知识库中暂无相关信息，建议尝试换个问法或联系人工客服。" />
@@ -603,6 +773,11 @@ function App() {
                                   {item.role === "assistant" && item.sources?.length ? (
                                     <SourcePopover sources={item.sources} />
                                   ) : null}
+                                  {item.role === "assistant" && messageDurations[item.message_id] ? (
+                                    <Text type="secondary" className="answer-duration">
+                                      本次回答耗时 {formatDuration(messageDurations[item.message_id])}
+                                    </Text>
+                                  ) : null}
                                 </Space>
                               </Card>
                             </List.Item>
@@ -611,11 +786,10 @@ function App() {
 
                         {/* Streaming message — rendered outside List for reliable display */}
                         {isStreaming && (
-                          <div className="chat-message assistant" style={{ marginBottom: 12 }}>
+                          <div className="chat-message assistant">
                             <Card className="answer-card">
-                              <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                                <Space>
-                                  <Tag color="green">助手</Tag>
+                              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                <Space className="message-actions">
                                   <LoadingOutlined style={{ color: "#1677ff" }} />
                                   <Text type="secondary">正在生成...</Text>
                                 </Space>
@@ -631,11 +805,10 @@ function App() {
                         )}
 
                         {(streamState.status === "aborted" || streamState.status === "error") && fullStreamingText && (
-                          <div className="chat-message assistant" style={{ marginBottom: 12 }}>
+                          <div className="chat-message assistant">
                             <Card className="answer-card">
-                              <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                                <Space>
-                                  <Tag color="green">助手</Tag>
+                              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                <Space className="message-actions">
                                   {streamState.status === "aborted" && (
                                     <Tag color="orange">已中断</Tag>
                                   )}
@@ -661,12 +834,14 @@ function App() {
                         {null}
                       </div>
 
-                      <Form layout="vertical">
-                        <Form.Item label="问题">
+                      <Form layout="vertical" className="chat-composer">
+                        <Form.Item>
                           <Input.TextArea
-                            rows={4}
+                            ref={questionInputRef}
+                            rows={3}
                             value={question}
                             onChange={(event) => setQuestion(event.target.value)}
+                            onKeyDown={handleQuestionKeyDown}
                             placeholder="请输入要查询的问题"
                             disabled={isStreaming}
                           />
@@ -702,6 +877,78 @@ function App() {
                     </Card>
                   </Col>
                 </Row>
+              ),
+            },
+            {
+              key: "metrics",
+              label: "监控指标",
+              children: (
+                <>
+                  <Card
+                    title={
+                      <Space>
+                        <DashboardOutlined />
+                        监控指标
+                      </Space>
+                    }
+                    className="panel-card"
+                    extra={
+                      <Button
+                        icon={<ReloadOutlined />}
+                        loading={loadingMetrics}
+                        onClick={refreshMetrics}
+                      >
+                        刷新
+                      </Button>
+                    }
+                  >
+                    <Row gutter={[16, 16]}>
+                      <Col xs={12} md={6}>
+                        <Statistic
+                          title="请求数"
+                          value={metrics?.counters["http.requests"] ?? 0}
+                        />
+                      </Col>
+                      <Col xs={12} md={6}>
+                        <Statistic
+                          title="错误数"
+                          value={metrics?.counters["http.errors"] ?? 0}
+                        />
+                      </Col>
+                      <Col xs={12} md={6}>
+                        <Statistic
+                          title="平均请求耗时"
+                          value={formatDuration(metrics?.timings["http.request"]?.avg_ms ?? 0)}
+                        />
+                      </Col>
+                      <Col xs={12} md={6}>
+                        <Statistic
+                          title="平均流式耗时"
+                          value={formatDuration(metrics?.timings["llm.stream_answer"]?.avg_ms ?? 0)}
+                        />
+                      </Col>
+                    </Row>
+                    {!metrics?.enabled && (
+                      <Alert
+                        className="metrics-alert"
+                        type="warning"
+                        showIcon
+                        message="监控指标未启用"
+                        description="请检查后端环境变量 METRICS_ENABLED。"
+                      />
+                    )}
+                  </Card>
+
+                  <Card title="耗时分布" className="panel-card">
+                    <Table
+                      rowKey="key"
+                      loading={loadingMetrics}
+                      columns={timingColumns}
+                      dataSource={timingRows}
+                      pagination={false}
+                    />
+                  </Card>
+                </>
               ),
             },
             {
@@ -745,15 +992,15 @@ function App() {
                           <p className="ant-upload-text">
                             {uploading ? "正在上传文档" : "点击或拖拽文档到这里"}
                           </p>
-                          <p className="ant-upload-hint">当前支持 TXT、Markdown</p>
+                          <p className="ant-upload-hint">当前支持 TXT、Markdown、PDF、DOCX</p>
                         </Upload.Dragger>
 
                         <Alert
                           className="upload-tip"
                           type="info"
                           showIcon
-                          message="上传后会立即解析、切分并写入 Qdrant"
-                          description="索引失败的文档也会保留在列表中，便于查看失败原因。"
+                          message="上传后会创建后台索引任务"
+                          description="文档列表会展示排队、索引中、已完成和失败状态；失败原因会保留。"
                         />
                       </Card>
                     </Col>

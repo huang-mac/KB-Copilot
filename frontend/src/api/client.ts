@@ -5,6 +5,8 @@ import type {
   ConversationRecord,
   DocumentListResponse,
   DocumentUploadResponse,
+  IndexJobResponse,
+  MetricsResponse,
 } from "../types/api";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -33,6 +35,12 @@ export function uploadDocument(kbId: string, file: File) {
 
 export function listDocuments(kbId: string) {
   return request<DocumentListResponse>(`/api/v1/kbs/${encodeURIComponent(kbId)}/documents`);
+}
+
+export function getIndexJob(kbId: string, jobId: string) {
+  return request<IndexJobResponse>(
+    `/api/v1/kbs/${encodeURIComponent(kbId)}/index-jobs/${encodeURIComponent(jobId)}`,
+  );
 }
 
 export function deleteDocument(kbId: string, docId: string) {
@@ -225,4 +233,8 @@ export function regenerateAnswer(
 
 export function healthCheck() {
   return request<{ status: string; service: string }>("/api/v1/health");
+}
+
+export function getMetrics() {
+  return request<MetricsResponse>("/api/v1/metrics");
 }

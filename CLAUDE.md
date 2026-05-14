@@ -4,7 +4,7 @@
 
 KB Copilot 是面向中小企业的智能知识库问答助手，当前核心能力包括文档上传、向量化索引、语义检索、RAG 问答、引用来源、文档管理、会话历史和多轮追问。
 
-当前阶段：**MVP2 已完成**。MVP3 将推进基础设施与检索编排增强。
+当前阶段：**MVP3 实现中**。已落地意图路由、工具调用、SSE、异步索引、混合检索入口和基础监控；MySQL 与 rerank 仍按 MVP3 规格继续补齐。
 
 ## SDD 开发规则
 
@@ -52,7 +52,7 @@ KB Copilot 是面向中小企业的智能知识库问答助手，当前核心能
 
 - MVP1：`.claude/specs/mvp1/`
 - MVP2：`.claude/specs/mvp2/`
-- MVP3：`.claude/specs/mvp3/`（spec/plan/tasks 已就绪，待实现）
+- MVP3：`.claude/specs/mvp3/`（spec/plan/tasks 已就绪，部分实现完成）
 - 意图路由：`.claude/specs/intent-routing/`
 - SSE 流式：`.claude/specs/sse-streaming/`
 
@@ -61,7 +61,7 @@ KB Copilot 是面向中小企业的智能知识库问答助手，当前核心能
 - 前端：React + Vite + TypeScript + Ant Design。
 - 后端：Python 3.11 + FastAPI + LangChain。
 - 向量库：Qdrant。
-- 元数据：SQLite，MVP3 计划兼容 MySQL。
+- 元数据：SQLite，MVP3 已预留 MySQL 配置，完整 MySQL repository 兼容仍待补齐。
 - 对象存储：MinIO，可选启用。
 - 部署：Docker Compose。
 

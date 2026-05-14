@@ -71,7 +71,8 @@ body {
 }
 
 .upload-tip,
-.chat-tip {
+.chat-tip,
+.metrics-alert {
   margin-top: 16px;
 }
 
@@ -98,6 +99,7 @@ body {
 .message-scroll-area {
   max-height: 480px;
   overflow-y: auto;
+  margin-bottom: 10px;
   padding-right: 4px;
   scroll-behavior: smooth;
 }
@@ -112,11 +114,13 @@ body {
 }
 
 .message-list {
-  margin: 0 0 16px;
+  margin: 0;
 }
 
 .chat-message {
+  display: flex !important;
   border-block-end: 0 !important;
+  padding: 6px 0 !important;
 }
 
 .chat-message.user {
@@ -127,6 +131,31 @@ body {
   justify-content: flex-start !important;
 }
 
+.chat-message.user .answer-card {
+  max-width: min(72%, 680px);
+  background: #e8f1ff;
+  border-color: #c8ddff;
+}
+
+.chat-message.assistant .answer-card {
+  max-width: min(82%, 760px);
+}
+
+.message-actions {
+  min-height: 24px;
+}
+
+.answer-duration {
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.user-message-text {
+  margin-bottom: 0 !important;
+  white-space: pre-wrap;
+}
+
 .message-sources {
   margin-top: 8px;
 }
@@ -134,8 +163,21 @@ body {
 .answer-card,
 .source-card {
   width: 100%;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #fbfdff;
+}
+
+.answer-card .ant-card-body {
+  padding: 12px 14px;
+}
+
+.chat-composer {
+  padding-top: 4px;
+  border-top: 1px solid #eef2f7;
+}
+
+.chat-composer .ant-form-item {
+  margin-bottom: 8px;
 }
 
 .markdown-body {
@@ -231,5 +273,10 @@ body {
   .app-content {
     width: min(100% - 24px, 1280px);
     padding-top: 20px;
+  }
+
+  .chat-message.user .answer-card,
+  .chat-message.assistant .answer-card {
+    max-width: 92%;
   }
 }

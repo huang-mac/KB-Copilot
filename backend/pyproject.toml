@@ -16,6 +16,8 @@ dependencies = [
     "langchain_text_splitters",
     "minio",
     "pydantic-settings>=2.5.0",
+    "pymupdf>=1.24.0",
+    "python-docx>=1.1.0",
     "python-multipart>=0.0.9",
     "qdrant-client>=1.11.0",
     "uvicorn[standard]>=0.30.0",

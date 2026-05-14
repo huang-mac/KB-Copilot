@@ -8,6 +8,7 @@ from app.integrations.minio_storage import MinioDocumentStorage
 from app.integrations.qdrant import QdrantVectorStore
 from app.repositories.conversations import ConversationRepository
 from app.repositories.documents import DocumentRepository
+from app.repositories.index_jobs import IndexJobRepository
 from app.services.document_index_service import DocumentIndexService
 from app.services.document_loader import DocumentLoader
 from app.services.rag_service import RAGService
@@ -21,6 +22,7 @@ from app.tools.business_tools import (
     QueryWmsTaskStatusTool,
 )
 from app.tools.registry import ToolRegistry
+from app.workers.index_worker import IndexWorker
 
 
 @lru_cache
@@ -39,6 +41,12 @@ def get_document_repository() -> DocumentRepository:
 def get_conversation_repository() -> ConversationRepository:
     settings = get_settings()
     return ConversationRepository(settings.document_db_path)
+
+
+@lru_cache
+def get_index_job_repository() -> IndexJobRepository:
+    settings = get_settings()
+    return IndexJobRepository(settings.document_db_path)
 
 
 @lru_cache
@@ -62,6 +70,16 @@ def get_document_index_service() -> DocumentIndexService:
         vector_store=get_vector_store(),
         document_repository=get_document_repository(),
         document_storage=get_document_storage(),
+    )
+
+
+@lru_cache
+def get_index_worker() -> IndexWorker:
+    settings = get_settings()
+    return IndexWorker(
+        index_job_repository=get_index_job_repository(),
+        document_index_service=get_document_index_service(),
+        poll_interval_seconds=settings.index_worker_poll_interval_seconds,
     )
 
 

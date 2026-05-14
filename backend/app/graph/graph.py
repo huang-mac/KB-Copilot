@@ -44,23 +44,23 @@ def build_graph(
     """构建意图识别 → 路由 → 处理的 LangGraph 图。"""
     graph = StateGraph(AgentState)
 
+    async def run_intent_classifier(state: AgentState) -> dict:
+        return await intent_classifier(state, llm_client)
+
+    async def run_kb_qa(state: AgentState) -> dict:
+        return await kb_qa_node(state, rag_service)
+
+    async def run_tool_executor(state: AgentState) -> dict:
+        return await tool_executor_node(state, tool_registry, llm_client)
+
+    async def run_clarification(state: AgentState) -> dict:
+        return await clarification_node(state)
+
     # 注册节点
-    graph.add_node(
-        "intent_classifier",
-        lambda state: intent_classifier(state, llm_client),
-    )
-    graph.add_node(
-        "kb_qa",
-        lambda state: kb_qa_node(state, rag_service),
-    )
-    graph.add_node(
-        "tool_executor",
-        lambda state: tool_executor_node(state, tool_registry, llm_client),
-    )
-    graph.add_node(
-        "clarification",
-        lambda state: clarification_node(state),
-    )
+    graph.add_node("intent_classifier", run_intent_classifier)
+    graph.add_node("kb_qa", run_kb_qa)
+    graph.add_node("tool_executor", run_tool_executor)
+    graph.add_node("clarification", run_clarification)
 
     # 边
     graph.set_entry_point("intent_classifier")

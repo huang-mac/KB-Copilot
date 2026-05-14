@@ -1,8 +1,8 @@
 # MVP3 基础设施与检索编排增强
 
-> **状态：规划中** 📌
+> **状态：实现中** 🔧
 >
-> MVP3 的目标不是继续堆叠企业权限能力，而是先把系统底座补强：用 SDD 规范驱动开发，完善索引、检索、路由、存储、流式响应和可观测性。鉴权、多租户、权限过滤、管理员配置等能力后移到 [MVP4](MVP4.md)。
+> MVP3 的目标不是继续堆叠企业权限能力，而是先把系统底座补强：用 SDD 规范驱动开发，完善索引、检索、路由、存储、流式响应和可观测性。当前已完成意图路由、工具调用、SSE、异步索引、混合检索入口、PDF/DOCX 解析、基础 metrics 与前端索引状态展示；MySQL repository 兼容和真实 rerank 仍在 MVP3 剩余范围内。鉴权、多租户、权限过滤、管理员配置等能力后移到 [MVP4](MVP4.md)。
 
 ## 版本定位
 
@@ -17,13 +17,13 @@ MVP3 包含：
 - **SDD 驱动开发**：先补齐规格文档，再按规格拆分接口、状态流、数据模型和验收标准。
 - **LangGraph 意图识别与路由**：识别知识库问答、订单查询、闲聊/无法识别等意图，并路由到对应节点。✅ 已完成，spec 见 [intent-routing](../.claude/specs/intent-routing/)。
 - **工具调用骨架**：订单查询先使用 mock 工具；预留 HTTP 工具调用实现，示例代码可注释保留。✅ 已完成。
-- **混合检索**：在 Qdrant 向量检索之外增加关键词检索。
-- **RRF 融合排序**：融合向量召回和关键词召回结果。
-- **可选 rerank**：对融合后的候选片段进行二次排序，可通过配置开关控制。
-- **MySQL 兼容**：在保留 SQLite 本地默认体验的同时，增加 MySQL 元数据存储能力。
-- **异步索引**：上传文档后创建索引任务，由后台 worker 执行解析、切分、Embedding 和入库。
-- **监控指标**：记录请求、索引、检索、rerank、LLM、token 和错误等基础指标。
-- **SSE 流式输出**：支持 token 级打字机效果、Markdown/代码块实时渲染、中断和重新生成。
+- **混合检索**：在 Qdrant 向量检索之外增加关键词检索。✅ 已通过 Qdrant hybrid/RRF 接入。
+- **RRF 融合排序**：融合向量召回和关键词召回结果。✅ 已通过 Qdrant 原生 fusion 接入。
+- **可选 rerank**：对融合后的候选片段进行二次排序，可通过配置开关控制。⏳ 配置已预留，真实 rerank 调用待补。
+- **MySQL 兼容**：在保留 SQLite 本地默认体验的同时，增加 MySQL 元数据存储能力。⏳ 配置已预留，repository 双后端待补。
+- **异步索引**：上传文档后创建索引任务，由后台 worker 执行解析、切分、Embedding 和入库。✅ 已完成 SQLite 任务队列与后台 worker。
+- **监控指标**：记录请求、索引、检索、rerank、LLM、token 和错误等基础指标。✅ 已完成 JSON metrics 基础版本。
+- **SSE 流式输出**：支持 token 级打字机效果、Markdown/代码块实时渲染、中断和重新生成。✅ 已完成。
 
 MVP3 不包含：
 
@@ -45,14 +45,15 @@ MVP3 不包含：
   - `clarification_required`：闲聊、无法识别或信息不足时，不直接编造答案，提示用户补充问题或选择查询方向。
 - 新增工具调用抽象，先实现 mock 订单查询工具，并预留 HTTP 调用 adapter。
 - 增加混合检索服务，统一封装向量召回、关键词召回、RRF 融合排序和可选 rerank。
-- 增加 MySQL 元数据存储实现，文档、会话、消息、索引任务等 repository 支持 SQLite / MySQL 切换。
+- 预留 MySQL 元数据存储配置；当前 repository 仍以 SQLite 为默认实现，MySQL 双后端待补齐。
 - 引入异步索引任务模型，上传接口返回任务状态，worker 负责后台索引。
-- 增加结构化日志和基础指标采集，暴露监控查询接口或 Prometheus 兼容指标。
+- 增加结构化日志和基础指标采集，暴露 JSON 监控查询接口。
 - 新增 SSE 流式问答接口，支持 token 流、完成事件、错误事件和中断事件。
 
 ## 前端改进
 
 - 文档上传后展示异步索引任务状态，包括排队中、索引中、已完成、失败和失败原因。
+- 上传组件支持 TXT、Markdown、PDF、DOCX；后端提取纯文本后索引。
 - 问答页支持 SSE token 级打字机效果。
 - Markdown 和代码块支持实时渲染，流式过程中保持可读。
 - 支持中断当前生成。
@@ -80,7 +81,9 @@ GET    /api/v1/metrics
 
 - `METADATA_DB_PROVIDER=sqlite|mysql`：控制元数据存储实现。
 - `MYSQL_DSN`：MySQL 连接配置。
+- `ASYNC_INDEX_ENABLED=true|false`：控制上传接口是否创建后台索引任务；关闭时回退同步索引。
 - `RERANK_ENABLED=true|false`：控制是否启用 rerank。
+- `INDEX_WORKER_POLL_INTERVAL_SECONDS`：控制索引 worker 轮询间隔。
 - `INDEX_WORKER_CONCURRENCY`：控制索引 worker 并发数。
 - `CHAT_STREAM_ENABLED=true|false`：控制是否启用 SSE 流式输出。
 - `METRICS_ENABLED=true|false`：控制是否采集监控指标。
@@ -122,11 +125,11 @@ HTTP 工具调用预留：
 - rerank 可通过配置开关启用或关闭。
 - 订单查询意图能被路由到 mock 工具，并返回结构化订单结果。
 - 闲聊、无法识别或信息不足的问题会要求用户补充，而不是编造答案。
-- 文档上传不会阻塞 HTTP 请求，索引状态可查询。
-- SQLite 默认体验保持可用，MySQL 模式能完成文档、会话、消息和索引任务读写。
+- 文档上传不会阻塞 HTTP 请求，索引状态可查询。✅ SQLite 模式已完成。
+- SQLite 默认体验保持可用，MySQL 模式能完成文档、会话、消息和索引任务读写。⏳ SQLite 已完成，MySQL 待补。
 - 问答支持 SSE token 级输出，前端能实时渲染 Markdown 和代码块。
 - 用户可以中断生成，并对上一轮回答重新生成。
-- 系统能查看基础监控指标，包括请求耗时、检索耗时、rerank 耗时、LLM 耗时、token 用量和错误数。
+- 系统能查看基础监控指标，包括请求耗时、检索耗时、LLM 耗时和错误数。✅ 已完成基础版本；rerank 耗时和 token 用量待随真实 rerank/LLM 用量统计补齐。
 
 ## 交付文档
 

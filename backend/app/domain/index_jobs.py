@@ -2,15 +2,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-DocumentStatus = Literal["queued", "processing", "indexing", "completed", "failed"]
+IndexJobStatus = Literal["queued", "processing", "completed", "failed"]
 
 
 @dataclass(frozen=True)
-class DocumentRecord:
+class IndexJob:
     kb_id: str
+    job_id: str
     doc_id: str
     filename: str
-    chunk_count: int
-    status: DocumentStatus
+    status: IndexJobStatus
     created_at: datetime
+    updated_at: datetime
+    content_type: str | None = None
     error_message: str | None = None

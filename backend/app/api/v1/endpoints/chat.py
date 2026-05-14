@@ -101,6 +101,7 @@ async def chat(
                 chunk_index=s.get("chunk_index", 0),
                 score=s.get("score", 0.0),
                 content=s.get("content", ""),
+                source_type=s.get("source_type"),
             )
             for s in sources
         ],
@@ -179,6 +180,7 @@ async def chat_stream(
                             "chunk_index": s.chunk_index,
                             "score": s.score,
                             "content": s.content,
+                            "source_type": s.source_type,
                         }
                         for s in event["data"]
                     ]
@@ -308,6 +310,7 @@ async def chat_regenerate(
                             "chunk_index": s.chunk_index,
                             "score": s.score,
                             "content": s.content,
+                            "source_type": s.source_type,
                         }
                         for s in event["data"]
                     ]

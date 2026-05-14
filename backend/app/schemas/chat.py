@@ -23,6 +23,7 @@ class Source(BaseModel):
     chunk_index: int
     score: float
     content: str
+    source_type: str | None = None
 
 
 class ChatResponse(BaseModel):

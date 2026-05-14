@@ -1,10 +1,18 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
-from app.core.dependencies import get_document_index_service
+from app.core.config import get_settings
+from app.core.dependencies import (
+    get_document_index_service,
+    get_document_repository,
+    get_index_job_repository,
+)
 from app.core.exceptions import KBError
 from app.domain.documents import DocumentRecord
+from app.repositories.documents import DocumentRepository
+from app.repositories.index_jobs import IndexJobRepository
 from app.schemas.documents import (
     DocumentDeleteResponse,
     DocumentListResponse,
@@ -39,12 +47,46 @@ async def upload_document(
         DocumentIndexService,
         Depends(get_document_index_service),
     ],
+    document_repository: Annotated[
+        DocumentRepository,
+        Depends(get_document_repository),
+    ],
+    index_job_repository: Annotated[
+        IndexJobRepository,
+        Depends(get_index_job_repository),
+    ],
 ) -> DocumentUploadResponse:
     try:
         content = await file.read()
+        filename = file.filename or "untitled.txt"
+        settings = get_settings()
+        if settings.async_index_enabled:
+            doc_id = str(uuid.uuid4())
+            document = document_repository.create(
+                kb_id=kb_id,
+                doc_id=doc_id,
+                filename=filename,
+                status="queued",
+            )
+            job_id = str(uuid.uuid4())
+            job = index_job_repository.create(
+                kb_id=kb_id,
+                job_id=job_id,
+                doc_id=doc_id,
+                filename=filename,
+                content=content,
+                content_type=file.content_type,
+            )
+            return DocumentUploadResponse(
+                **_to_document_response(document).model_dump(),
+                message="index job queued",
+                job_id=job.job_id,
+                job_status=job.status,
+            )
+
         document, _chunks = await document_index_service.index_document(
             kb_id=kb_id,
-            filename=file.filename or "untitled.txt",
+            filename=filename,
             content=content,
             content_type=file.content_type,
         )

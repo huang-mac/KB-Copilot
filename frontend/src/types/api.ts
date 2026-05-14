@@ -1,4 +1,4 @@
-export type DocumentStatus = "indexing" | "completed" | "failed";
+export type DocumentStatus = "queued" | "processing" | "indexing" | "completed" | "failed";
 
 export interface DocumentRecord {
   kb_id: string;
@@ -12,6 +12,20 @@ export interface DocumentRecord {
 
 export interface DocumentUploadResponse extends DocumentRecord {
   message: string;
+  job_id?: string | null;
+  job_status?: string | null;
+}
+
+export interface IndexJobResponse {
+  kb_id: string;
+  job_id: string;
+  doc_id: string;
+  filename: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  created_at: string;
+  updated_at: string;
+  content_type?: string | null;
+  error_message?: string | null;
 }
 
 export interface DocumentListResponse {
@@ -59,4 +73,17 @@ export interface ConversationMessage {
 
 export interface ConversationMessagesResponse {
   messages: ConversationMessage[];
+}
+
+export interface TimingMetric {
+  count: number;
+  avg_ms: number;
+  p95_ms: number;
+  max_ms: number;
+}
+
+export interface MetricsResponse {
+  enabled: boolean;
+  counters: Record<string, number>;
+  timings: Record<string, TimingMetric>;
 }

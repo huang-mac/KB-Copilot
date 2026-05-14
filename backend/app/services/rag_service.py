@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 
+from app.core.metrics import Timer
 from app.domain.chunks import RetrievedChunk
 from app.integrations.embedding import EmbeddingClient
 from app.integrations.llm import LLMClient
@@ -28,16 +29,14 @@ class RAGService:
     ) -> tuple[str, list[RetrievedChunk]]:
         history_text = self._build_history(history or [])
         query_text = "\n".join([history_text, question]).strip()
-        query_vector = await self.embedding_client.embed_query(query_text)
-        sources = self.vector_store.hybrid_search(
-            kb_id=kb_id, query=query_text, query_vector=query_vector, top_k=top_k,
-        )
+        sources = await self.search(kb_id=kb_id, query=query_text, top_k=top_k)
         context = self._build_context(sources)
-        answer = await self.llm_client.generate_answer(
-            question=question,
-            context=context,
-            history=history_text,
-        )
+        with Timer("llm.generate_answer"):
+            answer = await self.llm_client.generate_answer(
+                question=question,
+                context=context,
+                history=history_text,
+            )
         return answer, sources
 
     async def answer_stream(
@@ -50,22 +49,30 @@ class RAGService:
     ) -> AsyncGenerator[dict, None]:
         history_text = self._build_history(history or [])
         query_text = "\n".join([history_text, question]).strip()
-        query_vector = await self.embedding_client.embed_query(query_text)
-        sources = self.vector_store.hybrid_search(
-            kb_id=kb_id, query=query_text, query_vector=query_vector, top_k=top_k,
-        )
+        sources = await self.search(kb_id=kb_id, query=query_text, top_k=top_k)
         context = self._build_context(sources)
 
         yield {"type": "sources", "data": sources}
 
-        async for token in self.llm_client.astream_answer(
-            question=question,
-            context=context,
-            history=history_text,
-        ):
-            yield {"type": "token", "data": token}
+        with Timer("llm.stream_answer"):
+            async for token in self.llm_client.astream_answer(
+                question=question,
+                context=context,
+                history=history_text,
+            ):
+                yield {"type": "token", "data": token}
 
         yield {"type": "done", "data": None}
+
+    async def search(self, *, kb_id: str, query: str, top_k: int) -> list[RetrievedChunk]:
+        with Timer("retrieval.hybrid_search"):
+            query_vector = await self.embedding_client.embed_query(query)
+            return self.vector_store.hybrid_search(
+                kb_id=kb_id,
+                query=query,
+                query_vector=query_vector,
+                top_k=top_k,
+            )
 
     def _build_history(self, history: list[tuple[str, str]]) -> str:
         recent_history = history[-8:]

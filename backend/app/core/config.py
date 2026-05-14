@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "kb_copilot"
     document_db_path: str = "data/kb_copilot.sqlite3"
+    metadata_db_provider: Literal["sqlite", "mysql"] = "sqlite"
+    mysql_dsn: str = ""
 
     minio_enabled: bool = False
     minio_endpoint: str = "localhost:9000"
@@ -30,6 +32,12 @@ class Settings(BaseSettings):
     chunk_size: int = 700
     chunk_overlap: int = 120
     top_k: int = 5
+    async_index_enabled: bool = True
+    index_worker_poll_interval_seconds: float = 1.0
+    index_worker_concurrency: int = 1
+    chat_stream_enabled: bool = True
+    metrics_enabled: bool = True
+    rerank_enabled: bool = False
 
     embedding_provider: Literal["openai", "mock"] = "openai"
     embedding_base_url: str = "https://api.openai.com/v1"

@@ -10,6 +10,14 @@ export interface StreamState {
   error: string | null;
 }
 
+export interface StreamRunResult {
+  status: "done" | "error" | "aborted";
+  tokens: string[];
+  sources: Source[] | null;
+  conversationId: string | null;
+  error: string | null;
+}
+
 const SSE_LINE_REGEX = /^(event|data):\s?(.*)$/;
 
 // Small delay between token renders to ensure typewriter effect
@@ -55,7 +63,7 @@ export function useChatStream(kbId: string) {
     question: string,
     topK: number,
     conversationId?: string | null,
-  ) {
+  ): Promise<StreamRunResult> {
     console.log("[useChatStream] startStream called, question:", question);
     setState({
       status: "streaming",
@@ -67,6 +75,13 @@ export function useChatStream(kbId: string) {
 
     const abortController = new AbortController();
     abortRef.current = abortController;
+    const result: StreamRunResult = {
+      status: "error",
+      tokens: [],
+      sources: null,
+      conversationId: null,
+      error: null,
+    };
 
     try {
       console.log("[useChatStream] fetching SSE stream...");
@@ -104,6 +119,17 @@ export function useChatStream(kbId: string) {
               eventCount++;
               console.log("[useChatStream] event:", currentEvent, "data:", parsed);
               processEvent(currentEvent, parsed);
+              if (currentEvent === "token") {
+                result.tokens.push(parsed.token as string);
+              } else if (currentEvent === "sources") {
+                result.sources = (parsed.sources as Source[]) || [];
+              } else if (currentEvent === "done") {
+                result.status = "done";
+                result.conversationId = parsed.conversation_id as string;
+              } else if (currentEvent === "error") {
+                result.status = "error";
+                result.error = (parsed.detail as string) || "未知错误";
+              }
               // Yield to React so it can render each token individually
               if (currentEvent === "token") {
                 await tick();
@@ -118,8 +144,11 @@ export function useChatStream(kbId: string) {
     } catch (err) {
       console.error("[useChatStream] error:", err);
       if (abortController.signal.aborted) {
+        result.status = "aborted";
         setState((prev) => ({ ...prev, status: "aborted" as const }));
       } else {
+        result.status = "error";
+        result.error = err instanceof Error ? err.message : "连接中断";
         setState((prev) => ({
           ...prev,
           status: "error" as const,
@@ -130,6 +159,7 @@ export function useChatStream(kbId: string) {
       abortRef.current = null;
       readerRef.current = null;
     }
+    return result;
   }
 
   function processEvent(event: string, data: Record<string, unknown>) {
@@ -168,7 +198,7 @@ export function useChatStream(kbId: string) {
   async function startRegenerate(
     conversationId: string,
     topK: number,
-  ) {
+  ): Promise<StreamRunResult> {
     console.log("[useChatStream] startRegenerate called, conversationId:", conversationId);
     setState({
       status: "streaming",
@@ -180,6 +210,13 @@ export function useChatStream(kbId: string) {
 
     const abortController = new AbortController();
     abortRef.current = abortController;
+    const result: StreamRunResult = {
+      status: "error",
+      tokens: [],
+      sources: null,
+      conversationId: null,
+      error: null,
+    };
 
     try {
       const body = await regenerateAnswer(kbId, conversationId, topK, abortController.signal);
@@ -215,6 +252,17 @@ export function useChatStream(kbId: string) {
               eventCount++;
               processEvent(currentEvent, parsed);
               if (currentEvent === "token") {
+                result.tokens.push(parsed.token as string);
+              } else if (currentEvent === "sources") {
+                result.sources = (parsed.sources as Source[]) || [];
+              } else if (currentEvent === "done") {
+                result.status = "done";
+                result.conversationId = parsed.conversation_id as string;
+              } else if (currentEvent === "error") {
+                result.status = "error";
+                result.error = (parsed.detail as string) || "未知错误";
+              }
+              if (currentEvent === "token") {
                 await tick();
               }
             } catch {
@@ -227,8 +275,11 @@ export function useChatStream(kbId: string) {
     } catch (err) {
       console.error("[useChatStream] regenerate error:", err);
       if (abortController.signal.aborted) {
+        result.status = "aborted";
         setState((prev) => ({ ...prev, status: "aborted" as const }));
       } else {
+        result.status = "error";
+        result.error = err instanceof Error ? err.message : "连接中断";
         setState((prev) => ({
           ...prev,
           status: "error" as const,
@@ -239,6 +290,7 @@ export function useChatStream(kbId: string) {
       abortRef.current = null;
       readerRef.current = null;
     }
+    return result;
   }
 
   return {

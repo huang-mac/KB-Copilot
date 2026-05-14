@@ -81,6 +81,58 @@ class DocumentIndexService:
         )
         return self.document_repository.get(kb_id=kb_id, doc_id=doc_id) or document, chunks
 
+    async def index_existing_document(
+        self,
+        *,
+        kb_id: str,
+        doc_id: str,
+        filename: str,
+        content: bytes,
+        content_type: str | None = None,
+    ) -> tuple[DocumentRecord, list[DocumentChunk]]:
+        document = self.document_repository.get(kb_id=kb_id, doc_id=doc_id)
+        if document is None:
+            raise KBError("Document not found.")
+
+        self.document_repository.update_status(kb_id=kb_id, doc_id=doc_id, status="processing")
+        try:
+            if self.document_storage is not None:
+                self.document_storage.upload_document(
+                    kb_id=kb_id,
+                    doc_id=doc_id,
+                    filename=filename,
+                    content=content,
+                    content_type=content_type,
+                )
+            text = self.document_loader.load_text(filename, content)
+            chunks = self.text_splitter.split(
+                kb_id=kb_id,
+                doc_id=doc_id,
+                filename=filename,
+                text=text,
+            )
+            vectors = await self.embedding_client.embed_texts([chunk.content for chunk in chunks])
+            self.vector_store.delete_document(kb_id=kb_id, doc_id=doc_id)
+            self.vector_store.upsert_chunks(
+                chunks,
+                vectors,
+                created_at=document.created_at.isoformat(),
+            )
+        except Exception as exc:
+            self.document_repository.mark_failed(
+                kb_id=kb_id,
+                doc_id=doc_id,
+                error_message=str(exc),
+            )
+            raise
+
+        self.document_repository.mark_completed(
+            kb_id=kb_id,
+            doc_id=doc_id,
+            chunk_count=len(chunks),
+        )
+        return self.document_repository.get(kb_id=kb_id, doc_id=doc_id) or document, chunks
+
     async def reindex_document(self, *, kb_id: str, doc_id: str) -> DocumentRecord:
         document = self.document_repository.get(kb_id=kb_id, doc_id=doc_id)
         if document is None:

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-DocumentStatus = Literal["indexing", "completed", "failed"]
+DocumentStatus = Literal["queued", "processing", "indexing", "completed", "failed"]
 
 
 class DocumentResponse(BaseModel):
@@ -18,6 +18,8 @@ class DocumentResponse(BaseModel):
 
 class DocumentUploadResponse(DocumentResponse):
     message: str
+    job_id: str | None = None
+    job_status: str | None = None
 
 
 class DocumentReindexResponse(DocumentResponse):

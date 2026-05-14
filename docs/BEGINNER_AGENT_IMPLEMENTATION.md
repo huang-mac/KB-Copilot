@@ -2,69 +2,78 @@
 
 这份文档写给刚开始学习 AI Agent、RAG、FastAPI、Python 后端的同学。你可以把它当成一篇“从代码读懂项目”的学习笔记。
 
-本文会尽量少讲空泛概念，多围绕项目里的真实代码解释：
+本文尽量少讲空泛概念，多围绕项目里的真实代码解释：
 
 - 这个项目里的 Agent 到底是什么。
 - 用户上传文档后，后端做了什么。
-- 用户提问后，系统如何检索知识库并调用大模型。
+- 用户提问后，系统如何识别意图、检索知识库、调用工具或要求补充信息。
+- SSE 流式回答、异步索引、监控指标这些 MVP3 能力在代码里如何落地。
 - Python 代码和 Java 后端代码有哪些对应关系。
-- 当前项目的重点、亮点和后续可以升级的方向。
+- 初学者应该按什么顺序读代码。
 
 ## 1. 先给结论：本项目的 Agent 是什么
 
-严格来说，当前版本的 KB Copilot 不是那种“会自己规划任务、自己调用多个工具、循环反思”的复杂 Agent。
-
-它更准确的定位是：
+当前版本的 KB Copilot 已经不只是一个“单纯 RAG 问答接口”。它更准确的定位是：
 
 ```text
-一个基于 RAG 的知识库问答助手
+一个带意图路由、RAG 检索、业务工具调用和流式输出的知识库 Agent
 ```
 
-如果从宽泛的 Agent 角度理解，它的 Agent 能力主要体现在：
+它还不是那种会长期自主规划、循环反思、多 Agent 协作的复杂系统，但已经具备了典型 Agent 的几个基础能力：
 
 - 接收用户问题。
-- 从私有知识库中检索相关资料。
-- 把检索结果组织成上下文。
+- 识别用户意图。
+- 根据意图选择处理路径。
+- 知识库问题走 RAG 检索。
+- 业务查询走 mock 工具调用。
+- 闲聊、信息不足或无法识别时要求用户补充。
 - 调用大模型生成回答。
-- 返回答案和引用来源。
+- 保存会话历史、答案和引用来源。
+- 支持 SSE token 级流式回答、停止生成和重新生成。
 
-所以当前项目的核心不是复杂 Tool Calling，也不是多 Agent 协作，而是把最重要的一条链路跑通：
-
-```text
-文档进入系统 -> 变成可检索的知识 -> 用户提问 -> 检索资料 -> 大模型基于资料回答
-```
-
-这条链路就是 RAG，也就是 Retrieval-Augmented Generation，中文一般叫“检索增强生成”。
-
-## 2. 为什么当前项目不需要意图识别
-
-很多 Agent 文章里都会讲“意图识别”，比如先判断用户是在闲聊、查知识库、调用工具，还是要创建子任务。
-
-但当前项目暂时不需要这一层。
-
-原因很简单：你的接口已经表达了用户意图。
-
-问答接口是：
+核心链路可以概括成：
 
 ```text
-POST /api/v1/kbs/{kb_id}/chat
-GET  /api/v1/kbs/{kb_id}/conversations
-GET  /api/v1/kbs/{kb_id}/conversations/{conversation_id}/messages
+用户输入
+  -> LangGraph 意图识别
+  -> 条件路由
+     -> 知识库问答：混合检索 + LLM 回答
+     -> 业务工具：提取参数 + mock 工具 + LLM 总结
+     -> 需要澄清：返回补充问题提示
+  -> 保存会话
+  -> 返回普通响应或 SSE 流式响应
 ```
 
-这个接口的语义非常明确：用户就是在某个知识库 `kb_id` 下面提问。
+## 2. 当前项目为什么需要意图识别
 
-既然入口已经告诉系统“这是知识库问答”，就不需要再额外调用一次 LLM 判断“这是不是知识库问题”。
+早期版本只有一个知识库问答入口，用户进来就是问文档，因此不需要额外判断意图。
 
-什么时候才需要意图识别？
+MVP3 之后，同一个聊天框开始支持多种行为：
 
-- 同一个聊天框既支持普通闲聊，又支持知识库问答。
-- 同一个聊天框既支持查文档，又支持调用天气、股票、数据库等工具。
-- 系统有多个 Agent，需要先判断该交给哪个 Agent。
-- RAG 检索成本很高，你希望只有必要时才检索。
-- 用户输入很开放，系统必须先做路由。
+- 查知识库文档。
+- 查库存、订单、价格、WMS 任务、采购计划、发票等业务 mock 数据。
+- 对问候、闲聊、信息不足的问题做澄清提示。
 
-当前项目的设计反而是一个优点：链路简单，适合初学者先把 RAG 主流程学透。
+因此系统必须先回答一个问题：
+
+```text
+用户这句话到底应该交给谁处理？
+```
+
+这个判断就在 `backend/app/graph/nodes.py` 的 `intent_classifier()` 中完成。它会让 LLM 只返回固定标签之一，例如：
+
+```text
+kb_qa
+query_inventory
+query_order_status
+query_material_price
+query_wmstask_status
+query_purchase_plan
+query_invoice_status
+clarification_required
+```
+
+如果你是初学者，可以把“意图识别”理解成后端里的一个路由前置步骤。它不像 HTTP 路由根据 URL 分发请求，而是根据自然语言内容分发请求。
 
 ## 3. 项目整体分层
 
@@ -73,11 +82,15 @@ GET  /api/v1/kbs/{kb_id}/conversations/{conversation_id}/messages
 ```text
 backend/app/
 ├── api/v1/endpoints/   HTTP 接口层，接收前端请求
-├── core/               配置、依赖装配、异常、日志
-├── domain/             领域对象，例如 DocumentChunk
+├── core/               配置、依赖装配、异常、日志、指标
+├── domain/             领域对象，例如 DocumentChunk、IndexJob
+├── graph/              LangGraph Agent 编排
 ├── schemas/            请求和响应模型
-├── services/           核心业务编排，例如 RAGService
-├── integrations/       外部系统集成，例如 LLM、Embedding、Qdrant
+├── services/           核心业务编排，例如 RAGService、DocumentIndexService
+├── integrations/       外部系统集成，例如 LLM、Embedding、Qdrant、MinIO
+├── repositories/       SQLite 持久化，例如文档、会话、索引任务
+├── tools/              业务查询工具抽象和 mock 工具
+├── workers/            后台任务，例如异步索引 worker
 └── main.py             FastAPI 应用入口
 ```
 
@@ -86,61 +99,107 @@ backend/app/
 ```text
 FastAPI router     ≈ Spring MVC Controller
 services           ≈ Service 层
+repositories       ≈ DAO / Mapper / Repository
 integrations       ≈ 外部客户端 / Gateway / Adapter
 schemas            ≈ Request DTO / Response DTO
 domain             ≈ Domain Model / record
 dependencies.py    ≈ 简化版 Spring Bean 配置
+LangGraph          ≈ 一个显式状态机 / 工作流编排器
 ```
 
-## 4. HTTP 入口：FastAPI 应用如何启动
+## 4. FastAPI 应用如何启动
 
 项目入口是 `backend/app/main.py`。
 
-重点代码：
+它主要做几件事：
 
 ```python
-app = FastAPI(
-    title=settings.app_name,
-    version="0.1.0",
-    description="A lightweight RAG knowledge base assistant powered by FastAPI and Qdrant.",
-)
-
+app = FastAPI(...)
+app.add_middleware(CORSMiddleware, ...)
 app.include_router(api_router, prefix=settings.api_prefix)
 ```
 
-这段代码做了两件事：
+这相当于：
 
-1. 创建一个 FastAPI 应用，相当于 Spring Boot 创建 Web 应用上下文。
-2. 把所有 API 路由挂载到应用上。
+1. 创建 Web 应用。
+2. 注册中间件。
+3. 挂载所有 API 路由。
 
-`settings.api_prefix` 默认是 `/api/v1`，所以最终接口会带上这个前缀。
+MVP3 还增加了两个启动/关闭钩子：
+
+```python
+@app.on_event("startup")
+async def start_background_workers() -> None:
+    if settings.async_index_enabled:
+        get_index_worker().start()
+
+
+@app.on_event("shutdown")
+async def stop_background_workers() -> None:
+    if settings.async_index_enabled:
+        await get_index_worker().stop()
+```
+
+这表示 FastAPI 启动时会启动后台索引 worker，服务关闭时会停止它。
+
+`main.py` 里还有一个 HTTP middleware 用于记录基础指标：
+
+```python
+@app.middleware("http")
+async def collect_request_metrics(request: Request, call_next):
+    ...
+```
+
+它会统计请求次数、请求耗时和错误数量，最后通过 `GET /api/v1/metrics` 暴露。
+
+## 5. API 路由如何汇总
 
 路由汇总在 `backend/app/api/v1/api.py`：
 
 ```python
-api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(documents.router)
+api_router.include_router(index_jobs.router)
+api_router.include_router(search.router)
 api_router.include_router(conversations.router)
 api_router.include_router(chat.router)
+api_router.include_router(tools.router)
+api_router.include_router(feedback.router)
+api_router.include_router(suggestions.router)
+api_router.include_router(metrics.router)
 ```
 
-可以理解成 Spring 里把多个 Controller 都交给应用管理。
+可以理解成 Spring Boot 里多个 Controller 都注册到应用里。
 
-## 5. 两条主线：文档入库与用户问答
+当前比较重要的接口有：
+
+```text
+POST   /api/v1/kbs/{kb_id}/documents
+GET    /api/v1/kbs/{kb_id}/index-jobs/{job_id}
+POST   /api/v1/kbs/{kb_id}/search
+POST   /api/v1/kbs/{kb_id}/chat
+POST   /api/v1/kbs/{kb_id}/chat/stream
+POST   /api/v1/kbs/{kb_id}/chat/{conversation_id}/regenerate
+GET    /api/v1/metrics
+```
+
+## 6. 两条主线：文档入库与用户问答
 
 整个项目最重要的是两条主线。
 
-第一条是“文档入库”：
+第一条是“文档入库”。MVP3 默认走异步索引：
 
 ```text
 上传文件
-  -> 读取 bytes
-  -> 保存原始文件到 MinIO
+  -> 创建 DocumentRecord，状态 queued
+  -> 创建 IndexJob，保存文件 bytes
+  -> HTTP 立即返回 job_id
+  -> 后台 worker 领取 queued 任务
   -> 解析文本
   -> 切分 chunk
   -> 调用 Embedding 模型生成向量
-  -> 写入 Qdrant 向量库
+  -> 写入 Qdrant
+  -> 更新任务状态 completed 或 failed
 ```
 
 第二条是“用户问答”：
@@ -149,225 +208,191 @@ api_router.include_router(chat.router)
 用户提问
   -> 找到或创建会话
   -> 读取历史消息
-  -> 问题转向量
-  -> 在 Qdrant 中检索相似 chunk
-  -> 拼接成上下文
-  -> 调用 LLM
+  -> LangGraph 识别意图
+  -> 根据意图路由
+     -> kb_qa：RAG 检索 + LLM 回答
+     -> 工具意图：mock 工具调用 + LLM 总结
+     -> clarification_required：直接返回补充提示
   -> 保存用户问题、模型回答和引用来源
-  -> 返回答案和引用来源
+  -> 返回答案、引用、意图和工具结果
 ```
 
-MVP2 以后，系统还多了一条“会话管理”链路：
+SSE 流式接口稍有不同：当前流式接口直接走 `RAGService.answer_stream()`，重点服务于知识库问答的 token 级输出、中断和重新生成。
 
-```text
-新建会话
-  -> 保存 conversation 元数据
-  -> 每次问答追加 user / assistant 消息
-  -> 前端切换会话时重新加载消息流
-```
-
-这几条链路合起来就是本项目的核心 Agent 实现。
-
-## 6. 文档上传入口
+## 7. 文档上传入口：先排队，不阻塞
 
 文档上传接口在 `backend/app/api/v1/endpoints/documents.py`。
 
-核心代码：
+MVP3 的关键变化是：默认不再在 HTTP 请求里同步完成全部索引，而是创建后台任务。
+
+简化后的逻辑是：
 
 ```python
-@router.post("", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
-async def upload_document(
-    kb_id: str,
-    file: Annotated[UploadFile, File(...)],
-    document_index_service: Annotated[
-        DocumentIndexService,
-        Depends(get_document_index_service),
-    ],
-) -> DocumentUploadResponse:
-    content = await file.read()
-    document, _chunks = await document_index_service.index_document(
+content = await file.read()
+filename = file.filename or "untitled.txt"
+
+if settings.async_index_enabled:
+    doc_id = str(uuid.uuid4())
+    document = document_repository.create(
         kb_id=kb_id,
-        filename=file.filename or "untitled.txt",
+        doc_id=doc_id,
+        filename=filename,
+        status="queued",
+    )
+    job = index_job_repository.create(
+        kb_id=kb_id,
+        job_id=str(uuid.uuid4()),
+        doc_id=doc_id,
+        filename=filename,
         content=content,
         content_type=file.content_type,
     )
+    return DocumentUploadResponse(..., job_id=job.job_id, job_status=job.status)
 ```
 
-对初学者来说，这里有几个关键点。
+对初学者来说，这里有几个关键点：
 
-`async def` 表示这是一个异步接口函数。它可以在等待文件读取、模型请求、外部服务响应时释放执行权，提高并发能力。
+- `await file.read()`：异步读取上传文件。
+- `DocumentRecord`：保存文档列表里能看到的元数据。
+- `IndexJob`：保存后台索引任务状态和原始文件内容。
+- `ASYNC_INDEX_ENABLED=false` 时仍可回退到同步索引。
 
-`await file.read()` 表示等待文件内容读取完成。
-
-`Depends(get_document_index_service)` 是 FastAPI 的依赖注入机制。它会帮你拿到一个 `DocumentIndexService` 实例。
-
-如果类比 Java，大致像这样：
+Java 后端可以粗略类比成：
 
 ```java
 @PostMapping("/kbs/{kbId}/documents")
 public DocumentUploadResponse uploadDocument(
         @PathVariable String kbId,
-        MultipartFile file,
-        DocumentIndexService documentIndexService
+        MultipartFile file
 ) {
-    byte[] content = file.getBytes();
-    return documentIndexService.indexDocument(kbId, file.getOriginalFilename(), content);
+    Document doc = documentRepository.createQueued(...);
+    IndexJob job = indexJobRepository.create(..., file.getBytes());
+    return responseWithJobId(doc, job);
 }
 ```
 
-## 7. 文档入库编排：DocumentIndexService
+## 8. 异步索引任务：IndexWorker
 
-真正的文档入库逻辑在 `backend/app/services/document_index_service.py`。
+后台 worker 在 `backend/app/workers/index_worker.py`。
 
-核心代码：
-
-```python
-async def index_document(
-    self,
-    *,
-    kb_id: str,
-    filename: str,
-    content: bytes,
-) -> tuple[str, list[DocumentChunk]]:
-    doc_id = str(uuid.uuid4())
-    text = self.document_loader.load_text(filename, content)
-    chunks = self.text_splitter.split(kb_id=kb_id, doc_id=doc_id, filename=filename, text=text)
-    vectors = await self.embedding_client.embed_texts([chunk.content for chunk in chunks])
-    self.vector_store.upsert_chunks(chunks, vectors)
-    return doc_id, chunks
-```
-
-这段代码非常重要，它就是“知识进入系统”的完整流程。
-
-逐行解释：
+核心流程是：
 
 ```python
-doc_id = str(uuid.uuid4())
+while not self._stopping.is_set():
+    job = self.index_job_repository.claim_next()
+    if job is None:
+        await asyncio.sleep(self.poll_interval_seconds)
+        continue
+
+    payload = self.index_job_repository.get_payload(kb_id=job.kb_id, job_id=job.job_id)
+    ...
+    await self.document_index_service.index_existing_document(...)
 ```
 
-给上传的文档生成一个唯一 ID。类似 Java 里的：
+你可以把它理解成一个简单的本地任务队列消费者：
 
-```java
-String docId = UUID.randomUUID().toString();
+```text
+claim_next()
+  -> 找一条 queued 任务
+  -> 原子更新为 processing
+  -> 返回给 worker 处理
 ```
+
+如果索引成功：
 
 ```python
+self.index_job_repository.mark_completed(...)
+```
+
+如果索引失败：
+
+```python
+self.index_job_repository.mark_failed(..., error_message=str(exc))
+```
+
+前端可以通过这个接口查询状态：
+
+```text
+GET /api/v1/kbs/{kb_id}/index-jobs/{job_id}
+```
+
+## 9. 文档入库编排：DocumentIndexService
+
+真正的文档解析、切分、向量化和入库逻辑在 `backend/app/services/document_index_service.py`。
+
+MVP3 里最重要的方法是 `index_existing_document()`，它用于处理已经创建好的文档和索引任务：
+
+```python
+self.document_repository.update_status(kb_id=kb_id, doc_id=doc_id, status="processing")
 text = self.document_loader.load_text(filename, content)
-```
-
-把文件 bytes 解析成文本。当前支持 `.txt`、`.md`、`.markdown`。
-
-```python
 chunks = self.text_splitter.split(...)
-```
-
-把一篇长文档切成多个小片段。因为大模型和向量检索都不适合一次处理超长文档。
-
-```python
 vectors = await self.embedding_client.embed_texts([chunk.content for chunk in chunks])
+self.vector_store.delete_document(kb_id=kb_id, doc_id=doc_id)
+self.vector_store.upsert_chunks(chunks, vectors, created_at=document.created_at.isoformat())
+self.document_repository.mark_completed(...)
 ```
 
-把每个文本片段转换成向量。
+这段代码就是“知识进入系统”的完整流程：
 
-其中：
-
-```python
-[chunk.content for chunk in chunks]
+```text
+文件 bytes -> 文本 -> chunks -> embeddings -> Qdrant points
 ```
 
-是 Python 的列表推导式，相当于 Java Stream：
+它的职责很清楚：不关心 HTTP，也不关心页面，只负责把文档变成可检索知识。
 
-```java
-List<String> contents = chunks.stream()
-    .map(DocumentChunk::content)
-    .toList();
-```
-
-```python
-self.vector_store.upsert_chunks(chunks, vectors)
-```
-
-把文本片段和对应向量写入 Qdrant。
-
-这个 Service 的亮点是职责非常清晰：它不关心 HTTP，也不关心页面，只负责“文档如何变成可检索知识”。
-
-## 8. 文档解析：DocumentLoader
+## 10. 文档解析：DocumentLoader
 
 `backend/app/services/document_loader.py` 负责把上传文件变成字符串。
 
-核心代码：
+当前支持：
 
-```python
-class DocumentLoader:
-    supported_suffixes = {".txt", ".md", ".markdown"}
-
-    def load_text(self, filename: str, content: bytes) -> str:
-        suffix = Path(filename).suffix.lower()
-        if suffix not in self.supported_suffixes:
-            raise UnsupportedDocumentError(
-                f"Unsupported document type '{suffix}'. MVP1 supports txt and md."
-            )
-
-        text = self._decode_text(content)
-        if not text.strip():
-            raise UnsupportedDocumentError("Uploaded document is empty.")
-        return text
+```text
+.txt
+.md
+.markdown
+.pdf
+.docx
 ```
 
-这里的亮点是先做边界检查：
+简化逻辑：
 
-- 文件后缀必须是支持的类型。
-- 文件内容不能为空。
-- 编码解析单独封装在 `_decode_text()`。
+```python
+suffix = Path(filename).suffix.lower()
+if suffix == ".pdf":
+    text = self._load_pdf(content)
+elif suffix == ".docx":
+    text = self._load_docx(content)
+else:
+    text = self._decode_text(content)
+```
 
-`_decode_text()` 会依次尝试 `utf-8`、`utf-8-sig`、`gb18030`，这对中文文档比较友好。
+其中：
 
-## 9. 文本切分：TextSplitter
+- PDF 使用 `pymupdf` 提取文本。
+- DOCX 使用 `python-docx` 提取段落文本。
+- TXT/Markdown 会尝试 `utf-8`、`utf-8-sig`、`gb18030` 等编码。
+
+这对中文文档比较友好。
+
+## 11. 文本切分：TextSplitter
 
 文本切分在 `backend/app/services/text_splitter.py`。
 
-核心代码：
-
-```python
-class TextSplitter:
-    def __init__(self, chunk_size: int, chunk_overlap: int) -> None:
-        if chunk_overlap >= chunk_size:
-            raise ValueError("chunk_overlap must be smaller than chunk_size")
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""],
-        )
-```
-
-这里使用的是 LangChain 的 `RecursiveCharacterTextSplitter`。
-
-它的思想是：尽量按照更自然的语义边界切分文本。
-
-切分优先级大致是：
+项目使用 LangChain 的 `RecursiveCharacterTextSplitter`。它会尽量按自然边界切分：
 
 ```text
-段落 -> 换行 -> 中文句号/问号/感叹号 -> 英文句号/问号/感叹号 -> 空格 -> 字符
+段落 -> 换行 -> 中文句号/问号/感叹号 -> 英文标点 -> 空格 -> 字符
 ```
 
-这比简单地每 700 个字符硬切一次更好，因为它更可能保留完整句子和段落。
+为什么要切分？
 
-`chunk_overlap` 是重叠长度。假设一个 chunk 结尾处的信息和下一个 chunk 开头有关，重叠可以避免上下文断裂。
+因为文档太长时，向量检索和大模型上下文都不适合一次塞完整全文。切成小片段后，系统可以只召回最相关的片段。
 
-举个简单例子：
+`chunk_overlap` 是片段重叠长度，用来降低上下文断裂风险。
 
-```text
-chunk 1: A B C D E
-chunk 2: D E F G H
-```
+## 12. 领域对象：DocumentChunk、RetrievedChunk、IndexJob
 
-`D E` 就是重叠部分。
-
-这也是当前项目的一个重点亮点：虽然是 MVP，但没有用最粗糙的固定切分，而是使用了递归语义切分。
-
-## 10. 领域对象：DocumentChunk 和 RetrievedChunk
-
-领域对象在 `backend/app/domain/chunks.py`。
+文档片段对象在 `backend/app/domain/chunks.py`。
 
 ```python
 @dataclass(frozen=True)
@@ -380,11 +405,11 @@ class DocumentChunk:
     content: str
 ```
 
-`@dataclass` 会自动帮你生成构造函数等常用方法。
+`@dataclass` 会自动生成构造函数等常用方法。
 
-`frozen=True` 表示对象创建后不建议再修改，类似不可变对象。
+`frozen=True` 表示对象创建后不建议再修改，类似 Java 的不可变对象。
 
-Java 里可以类比成：
+Java 可以类比成：
 
 ```java
 public record DocumentChunk(
@@ -397,19 +422,32 @@ public record DocumentChunk(
 ) {}
 ```
 
-为什么要有 `DocumentChunk`？
+检索结果对象 `RetrievedChunk` 多了：
 
-因为系统不能只存文本内容，还要知道这段文本来自哪里：
+```python
+score: float
+source_type: str = "vector"
+```
 
-- 属于哪个知识库：`kb_id`
-- 属于哪个文档：`doc_id`
-- 来自哪个文件：`filename`
-- 是第几个片段：`chunk_index`
-- 片段内容是什么：`content`
+`source_type` 用来告诉前端这个引用来源来自哪种召回方式。当前混合检索通过 Qdrant fusion 返回时会标记为 `fusion`。
 
-这些元数据后面会用于返回引用来源。
+索引任务对象在 `backend/app/domain/index_jobs.py`：
 
-## 11. Embedding：把文字变成向量
+```python
+@dataclass(frozen=True)
+class IndexJob:
+    kb_id: str
+    job_id: str
+    doc_id: str
+    filename: str
+    status: IndexJobStatus
+    created_at: datetime
+    updated_at: datetime
+```
+
+它让“上传”和“索引完成”解耦。
+
+## 13. Embedding：把文字变成向量
 
 Embedding 相关代码在 `backend/app/integrations/embedding.py`。
 
@@ -427,487 +465,30 @@ class EmbeddingClient:
 
 这里体现了面向接口编程。
 
-Java 中你可能会写：
+真实实现是 `OpenAIEmbeddingClient`，通过 OpenAI-compatible Embedding 服务生成向量。
 
-```java
-public interface EmbeddingClient {
-    List<List<Float>> embedTexts(List<String> texts);
-    List<Float> embedQuery(String query);
-}
-```
+项目也提供 `MockEmbeddingClient`，没有 API Key 时也能做本地冒烟测试。
 
-`OpenAIEmbeddingClient` 是真实实现，内部通过 LangChain 的 `OpenAIEmbeddings` 调用 OpenAI-compatible Embedding 服务。
-
-```python
-class OpenAIEmbeddingClient(EmbeddingClient):
-    def __init__(self, settings: Settings) -> None:
-        self.api_key = settings.embedding_api_key
-        self.client = OpenAIEmbeddings(
-            api_key=settings.embedding_api_key,
-            base_url=settings.embedding_base_url.rstrip("/"),
-            model=settings.embedding_model,
-            check_embedding_ctx_length=False,
-        )
-```
-
-项目还提供了 `MockEmbeddingClient`。
-
-```python
-class MockEmbeddingClient(EmbeddingClient):
-    """Deterministic local embedding for smoke tests without external API keys."""
-```
-
-这个 mock 实现很适合本地冒烟测试。没有 API Key 时，也可以跑通基本链路。
-
-这也是项目的一个亮点：初学者不需要一开始就卡在模型 API 配置上。
-
-## 12. Qdrant：向量库如何保存和检索
+## 14. Qdrant：向量库如何保存和混合检索
 
 向量库封装在 `backend/app/integrations/qdrant.py`。
 
-初始化：
+写入时不仅存向量，还会把元数据放到 payload 里：
 
 ```python
-class QdrantVectorStore:
-    def __init__(self, settings: Settings) -> None:
-        if settings.qdrant_url == ":memory:":
-            self.client = QdrantClient(":memory:")
-        else:
-            self.client = QdrantClient(url=settings.qdrant_url)
-        self.collection_name = settings.qdrant_collection
-        self.vector_size = settings.embedding_dimension
-```
-
-这里做了两件事：
-
-- 根据配置连接 Qdrant。
-- 记录 collection 名称和向量维度。
-
-写入向量：
-
-```python
-def upsert_chunks(self, chunks: list[DocumentChunk], vectors: list[list[float]]) -> None:
-    self.ensure_collection()
-    points = [
-        models.PointStruct(
-            id=chunk.id,
-            vector=vector,
-            payload={
-                "kb_id": chunk.kb_id,
-                "doc_id": chunk.doc_id,
-                "filename": chunk.filename,
-                "chunk_index": chunk.chunk_index,
-                "content": chunk.content,
-            },
-        )
-        for chunk, vector in zip(chunks, vectors, strict=True)
-    ]
-    self.client.upsert(collection_name=self.collection_name, points=points)
-```
-
-这里的 `payload` 很关键。
-
-向量库里不只是存向量，还要存元数据。否则检索出来之后，只知道“有个向量很相似”，却不知道它来自哪个文件、哪个片段、具体内容是什么。
-
-检索向量：
-
-```python
-def search(self, *, kb_id: str, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
-    self.ensure_collection()
-    response = self.client.query_points(
-        collection_name=self.collection_name,
-        query=query_vector,
-        query_filter=models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="kb_id",
-                    match=models.MatchValue(value=kb_id),
-                )
-            ]
-        ),
-        limit=top_k,
-        with_payload=True,
-    )
-```
-
-这里最重要的是 `query_filter`。
-
-它保证只在当前 `kb_id` 对应的知识库里检索，不会把其他知识库的内容混进来。
-
-这就是最基础的知识库隔离。
-
-## 13. 问答入口：Chat API
-
-问答接口在 `backend/app/api/v1/endpoints/chat.py`。
-
-核心代码：
-
-```python
-@router.post("", response_model=ChatResponse)
-async def chat(
-    kb_id: str,
-    request: ChatRequest,
-    rag_service: Annotated[RAGService, Depends(get_rag_service)],
-) -> ChatResponse:
-    settings = get_settings()
-    top_k = request.top_k or settings.top_k
-
-    answer, sources = await rag_service.answer(
-        kb_id=kb_id,
-        question=request.question,
-        top_k=top_k,
-    )
-```
-
-这里的逻辑很薄：
-
-- 从路径里拿到 `kb_id`。
-- 从请求体里拿到 `question` 和 `top_k`。
-- 调用 `RAGService.answer()`。
-- 把答案和引用来源包装成响应。
-
-Controller 层保持很薄，这是一个好习惯。
-
-业务逻辑不要堆在接口函数里，而是放到 Service 层。
-
-### MVP2 增强：Chat API 会写入会话历史
-
-MVP2 的 `ChatRequest` 多了 `conversation_id`：
-
-```python
-class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="User question")
-    top_k: int | None = Field(default=None, ge=1, le=20)
-    conversation_id: str | None = None
-```
-
-如果前端没有传 `conversation_id`，后端会自动创建一个新会话；如果传了，就把本次问答追加到已有会话。
-
-保存消息时会写两条记录：
-
-```text
-user      -> 用户问题
-assistant -> 模型回答 + sources 引用来源
-```
-
-这样前端刷新后，可以通过会话接口把历史消息重新展示出来。
-
-## 14. 请求响应模型：Pydantic Schema
-
-请求和响应模型在 `backend/app/schemas/chat.py`。
-
-```python
-class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="User question")
-    top_k: int | None = Field(default=None, ge=1, le=20)
-    conversation_id: str | None = None
-```
-
-这里有几个 Python 新手容易困惑的点。
-
-`BaseModel` 来自 Pydantic，作用类似 Java 里的 DTO，但它还能自动校验字段。
-
-`question: str` 表示 `question` 必须是字符串。
-
-`Field(..., min_length=1)` 表示必填，并且长度至少为 1。
-
-`top_k: int | None` 表示 `top_k` 可以是整数，也可以是空值。类似 Java 里的：
-
-```java
-Integer topK;
-```
-
-响应模型：
-
-```python
-class ChatResponse(BaseModel):
-    conversation_id: str
-    answer: str
-    sources: list[Source]
-```
-
-这保证 API 返回的数据结构稳定，前端可以放心按固定结构解析。
-
-## 15. RAGService：本项目 Agent 的核心编排器
-
-最重要的类是 `backend/app/services/rag_service.py`。
-
-```python
-class RAGService:
-    def __init__(
-        self,
-        *,
-        embedding_client: EmbeddingClient,
-        vector_store: QdrantVectorStore,
-        llm_client: LLMClient,
-    ) -> None:
-        self.embedding_client = embedding_client
-        self.vector_store = vector_store
-        self.llm_client = llm_client
-```
-
-构造函数接收三个依赖：
-
-- `EmbeddingClient`：负责把问题变成向量。
-- `QdrantVectorStore`：负责检索相似文档片段。
-- `LLMClient`：负责调用大模型生成回答。
-
-这就是典型的组合式设计。`RAGService` 不自己实现所有细节，而是编排多个组件完成任务。
-
-核心方法：
-
-```python
-async def answer(
-    self,
-    *,
-    kb_id: str,
-    question: str,
-    top_k: int,
-) -> tuple[str, list[RetrievedChunk]]:
-    query_vector = await self.embedding_client.embed_query(question)
-    sources = self.vector_store.search(kb_id=kb_id, query_vector=query_vector, top_k=top_k)
-    context = self._build_context(sources)
-    answer = await self.llm_client.generate_answer(question=question, context=context)
-    return answer, sources
-```
-
-这是全文最值得反复看的代码。
-
-它浓缩了 RAG 问答的全部核心思想：
-
-```text
-用户问题
-  -> embedding
-  -> 向量检索
-  -> 构造上下文
-  -> LLM 生成答案
-```
-
-如果你只记一段代码，就记这段。
-
-## 16. 上下文拼接：把检索结果喂给大模型
-
-`RAGService._build_context()` 负责把检索出来的文档片段拼成一段字符串。
-
-```python
-def _build_context(self, sources: list[RetrievedChunk]) -> str:
-    blocks = []
-    for source in sources:
-        blocks.append(
-            "\n".join(
-                [
-                    f"来源文件：{source.filename}",
-                    f"片段序号：{source.chunk_index}",
-                    f"内容：{source.content}",
-                ]
-            )
-        )
-    return "\n\n".join(blocks)
-```
-
-为什么要这样做？
-
-因为大模型不会自动知道你的知识库内容。你必须把检索到的资料放进 Prompt 里。
-
-这一步就是 RAG 中的 Augmented，也就是“增强”。
-
-没有这一步，大模型只能靠自己训练时学到的通用知识回答，无法可靠回答企业私有文档里的内容。
-
-### MVP2 增强：把历史消息也放进 Prompt
-
-MVP1 只有“当前问题 + 检索上下文”。MVP2 增加了会话历史后，问答链路变成：
-
-```text
-当前问题 + 最近历史消息 + 检索上下文 -> LLM
-```
-
-这样用户可以围绕同一个会话继续追问，例如先问“这份文档讲了什么”，再问“那第二点展开说说”。系统会把最近几轮 user / assistant 消息传给 `RAGService`，再由 `LLMClient` 放进 Prompt。
-
-这里要注意：当前实现是轻量级多轮会话，不是完整 Agent Memory。它不会做长期记忆总结，只是保存消息并取最近几轮作为上下文，足够支撑 MVP2 的产品体验。
-
-## 17. LLMClient：真正调用大模型
-
-大模型调用在 `backend/app/integrations/llm.py`。
-
-抽象接口：
-
-```python
-class LLMClient:
-    async def generate_answer(self, *, question: str, context: str, history: str = "") -> str:
-        raise NotImplementedError
-```
-
-真实实现：
-
-```python
-messages = [
-    {
-        "role": "system",
-        "content": (
-            "你是一个企业知识库问答助手。"
-            "请只根据给定资料回答问题；如果资料中没有答案，"
-            "请回答“根据当前知识库资料无法确认”。"
-        ),
-    },
-    {
-        "role": "user",
-        "content": f"历史对话：\n{history or '无'}\n\n资料：\n{context}\n\n问题：\n{question}",
-    },
-]
-```
-
-这里的 system prompt 非常关键。
-
-它给模型设定了边界：
-
-```text
-只能根据给定资料回答
-资料中没有答案就说无法确认
-```
-
-这能降低模型胡编乱造的概率。
-
-然后通过 LangChain 的 `ChatOpenAI` 调用 OpenAI-compatible LLM 服务。
-
-```python
-return (await self.client.ainvoke(messages)).content.strip()
-```
-
-`ainvoke` 里的 `a` 通常表示 async，也就是异步版本。
-
-## 18. 依赖装配：dependencies.py 像一个简化版 Spring 配置类
-
-依赖装配在 `backend/app/core/dependencies.py`。
-
-```python
-@lru_cache
-def get_rag_service() -> RAGService:
-    settings = get_settings()
-    return RAGService(
-        embedding_client=create_embedding_client(settings),
-        vector_store=get_vector_store(),
-        llm_client=create_llm_client(settings),
-    )
-```
-
-这段代码相当于手写一个 Bean 工厂。
-
-Java Spring 里可能是：
-
-```java
-@Bean
-public RAGService ragService(
-        EmbeddingClient embeddingClient,
-        VectorStore vectorStore,
-        LLMClient llmClient
-) {
-    return new RAGService(embeddingClient, vectorStore, llmClient);
+payload={
+    "kb_id": chunk.kb_id,
+    "doc_id": chunk.doc_id,
+    "filename": chunk.filename,
+    "chunk_index": chunk.chunk_index,
+    "created_at": created_at,
+    "content": chunk.content,
 }
 ```
 
-`@lru_cache` 的作用是缓存函数返回值。
+payload 很重要。否则检索出来之后，只知道“某个向量相似”，却不知道它来自哪个文件、哪个片段。
 
-也就是说，第一次调用 `get_rag_service()` 会创建对象，后面再次调用会复用之前的对象。
-
-这有点像单例 Bean。
-
-### MVP2 增强：Repository 负责持久化
-
-MVP2 开始引入 SQLite 持久化，主要有两个 Repository：
-
-```text
-DocumentRepository
-  -> 保存文档元数据、chunk 数量、索引状态、失败原因
-
-ConversationRepository
-  -> 保存会话列表
-  -> 保存 user / assistant 消息
-  -> 保存 assistant 回答对应的引用来源
-```
-
-这样前端刷新页面后，仍然可以重新加载文档列表和历史会话。
-
-对初学者来说，可以把 Repository 理解成 Java 项目里的 DAO / Mapper 层。Service 不直接写 SQL，而是通过 Repository 完成数据读写。
-
-## 19. 配置：Settings 统一读取环境变量
-
-配置在 `backend/app/core/config.py`。
-
-```python
-class Settings(BaseSettings):
-    app_name: str = "KB Copilot API"
-    api_prefix: str = "/api/v1"
-
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_collection: str = "kb_copilot"
-    document_db_path: str = "data/kb_copilot.sqlite3"
-
-    minio_enabled: bool = False
-    minio_endpoint: str = "localhost:9000"
-    minio_bucket: str = "kb-copilot-documents"
-
-    chunk_size: int = 700
-    chunk_overlap: int = 120
-    top_k: int = 5
-
-    embedding_provider: Literal["openai", "mock"] = "openai"
-    llm_provider: Literal["openai", "mock"] = "openai"
-```
-
-这类似 Spring Boot 的 `application.yml` + `@ConfigurationProperties`。
-
-`.env` 中配置的值会覆盖默认值。
-
-比如：
-
-```env
-EMBEDDING_PROVIDER=mock
-LLM_PROVIDER=mock
-```
-
-就可以切换到 mock 模式，方便本地测试。
-
-## 20. 当前项目的重点亮点
-
-### 亮点 1：RAG 主链路完整
-
-项目已经跑通了从文档上传到大模型回答的完整闭环：
-
-```text
-MinIO 原文保存 -> 文档解析 -> 文本切分 -> Embedding -> Qdrant 入库 -> 向量检索 -> Prompt 拼接 -> LLM 回答
-```
-
-这比只写一个“调用大模型接口”的 Demo 更有学习价值。
-
-### 亮点 2：代码分层清晰
-
-接口层、业务层、外部集成层分得比较清楚。
-
-例如 `chat.py` 只负责接收请求，真正的 RAG 逻辑放在 `RAGService`。
-
-这种分层非常适合后续扩展。
-
-### 亮点 3：面向接口编程
-
-`EmbeddingClient` 和 `LLMClient` 都是抽象基类风格。
-
-真实模型和 mock 模型可以替换：
-
-```text
-EmbeddingClient
-  -> OpenAIEmbeddingClient
-  -> MockEmbeddingClient
-
-LLMClient
-  -> OpenAIChatClient
-  -> MockLLMClient
-```
-
-这对测试和本地开发很友好。
-
-### 亮点 4：知识库隔离做得早
-
-Qdrant 检索时使用了 `kb_id` 过滤：
+检索时会按 `kb_id` 过滤：
 
 ```python
 query_filter=models.Filter(
@@ -920,183 +501,663 @@ query_filter=models.Filter(
 )
 ```
 
-这避免不同知识库的数据互相污染。
+这保证只在当前知识库内检索。
 
-### 亮点 5：返回引用来源
+MVP3 的 `hybrid_search()` 使用 Qdrant 原生 prefetch + fusion：
+
+```python
+prefetch=[
+    models.Prefetch(query=query_vector, limit=top_k * 2),
+    models.Prefetch(query=models.Query(text=models.QueryText(text=query)), limit=top_k * 2),
+],
+query=models.FusionQuery(fusion=models.Fusion.RRF),
+```
+
+可以理解成：
+
+```text
+向量召回一批结果
+关键词召回一批结果
+用 RRF 融合排序
+返回 Top-K
+```
+
+RRF 的全称是 Reciprocal Rank Fusion，是一种常见的多路检索结果融合算法。
+
+## 15. LangGraph：Agent 的编排核心
+
+Agent 图在 `backend/app/graph/graph.py`。
+
+它注册了四个节点：
+
+```python
+graph.add_node("intent_classifier", ...)
+graph.add_node("kb_qa", ...)
+graph.add_node("tool_executor", ...)
+graph.add_node("clarification", ...)
+```
+
+入口是意图识别：
+
+```python
+graph.set_entry_point("intent_classifier")
+```
+
+然后通过条件边路由：
+
+```python
+graph.add_conditional_edges(
+    "intent_classifier",
+    _route_by_intent,
+    {
+        "kb_qa": "kb_qa",
+        "tool_executor": "tool_executor",
+        "clarification": "clarification",
+    },
+)
+```
+
+`_route_by_intent()` 的逻辑很直接：
+
+```python
+if intent in TOOL_INTENTS:
+    return "tool_executor"
+if intent == "clarification_required":
+    return "clarification"
+return "kb_qa"
+```
+
+这就是本项目 Agent 的核心状态机。
+
+## 16. AgentState：节点之间传递什么
+
+状态定义在 `backend/app/graph/state.py`：
+
+```python
+class AgentState(TypedDict):
+    kb_id: str
+    question: str
+    top_k: int
+    history: str
+    intent: str
+    retrieval_results: list[dict]
+    tool_result: dict | None
+    answer: str
+    sources: list[dict]
+    error: str | None
+```
+
+你可以把它理解成“图执行过程中的上下文对象”。
+
+每个节点读取一部分字段，再写回一部分字段。例如：
+
+- `intent_classifier` 写入 `intent`。
+- `kb_qa_node` 写入 `answer` 和 `sources`。
+- `tool_executor_node` 写入 `answer` 和 `tool_result`。
+- `clarification_node` 写入澄清提示。
+
+Java 里可以类比成一个工作流上下文 DTO。
+
+## 17. 知识库问答节点：kb_qa_node
+
+代码在 `backend/app/graph/nodes.py`。
+
+简化逻辑：
+
+```python
+answer, sources = await rag_service.answer(
+    kb_id=state["kb_id"],
+    question=state["question"],
+    top_k=state.get("top_k", 5),
+    history=_parse_history(state.get("history", "")),
+)
+```
+
+这个节点不自己做检索细节，而是调用 `RAGService`。
+
+返回时会把引用来源转换成 API 可返回的 dict：
+
+```python
+{
+    "doc_id": s.doc_id,
+    "filename": s.filename,
+    "chunk_index": s.chunk_index,
+    "score": s.score,
+    "content": s.content,
+    "source_type": s.source_type,
+}
+```
+
+这就是前端引用弹窗的数据来源。
+
+## 18. 工具调用节点：tool_executor_node
+
+业务工具在 `backend/app/tools/`。
+
+当前实现的是 mock 工具，例如：
+
+```text
+query_inventory
+query_order_status
+query_material_price
+query_wmstask_status
+query_purchase_plan
+query_invoice_status
+```
+
+工具执行节点的流程是：
+
+```text
+根据 intent 找到工具
+  -> 用 LLM 从问题中提取参数
+  -> 执行 mock 工具
+  -> 用 LLM 把工具结果总结成自然语言回答
+```
+
+对应代码在 `tool_executor_node()`：
+
+```python
+tool = tool_registry.get(intent)
+params = await _extract_params(llm_client, tool, question)
+tool_result = await tool.execute(**params)
+answer = await llm_client.generate_answer(
+    question=question,
+    context=_format_tool_result(tool_result),
+    history=state.get("history", ""),
+)
+```
+
+这已经是一个轻量 Tool Calling 流程，只是工具选择由前置意图识别决定，而不是完全交给模型自由调用。
+
+## 19. 澄清节点：clarification_node
+
+当用户输入太短、闲聊或信息不足时，系统不会强行检索或编造答案。
+
+`clarification_node()` 会返回一段引导：
+
+```text
+抱歉，我没有完全理解您的问题。您可以尝试：
+1. 查询知识库
+2. 查询库存
+3. 查询订单
+...
+```
+
+这对企业知识库问答很重要。因为不知道就要求补充，比编造答案更可靠。
+
+## 20. Chat API：普通问答入口如何运行 Agent
+
+普通问答接口在 `backend/app/api/v1/endpoints/chat.py`。
+
+核心流程：
+
+```python
+state = await run_graph(
+    graph=graph,
+    kb_id=kb_id,
+    question=request.question,
+    top_k=top_k,
+    history=history_text,
+)
+
+answer = state.get("answer", "")
+sources = state.get("sources", [])
+intent = state.get("intent")
+tool_result = state.get("tool_result")
+```
+
+这说明普通 `POST /chat` 走的是 LangGraph Agent 编排。
+
+然后保存两条消息：
+
+```text
+user      -> 用户问题
+assistant -> 模型回答 + sources 引用来源
+```
+
+最后返回：
+
+```python
+ChatResponse(
+    conversation_id=conversation_id,
+    answer=answer,
+    sources=[...],
+    intent=intent,
+    tool_result=tool_result,
+)
+```
+
+所以前端不仅能看到答案，还能知道这次请求被识别成什么意图，以及工具调用结果是什么。
+
+## 21. SSE 流式回答：chat/stream
+
+流式接口还是在 `chat.py`：
+
+```python
+@router.post("/stream")
+async def chat_stream(...)
+```
+
+它返回的是：
+
+```python
+StreamingResponse(
+    event_generator(),
+    media_type="text/event-stream",
+)
+```
+
+`event_generator()` 会持续 yield SSE 事件：
+
+```text
+event: sources
+data: {"sources": [...]}
+
+event: token
+data: {"token": "..."}
+
+event: done
+data: {"conversation_id": "...", "message_id": "..."}
+```
+
+如果用户中断连接，后端会保存部分回答，并在内容后加上：
+
+```text
+[已中断]
+```
+
+这就是前端“停止生成”的后端基础。
+
+需要注意：当前流式接口直接走 `RAGService.answer_stream()`，没有经过 LangGraph 工具路由；它主要服务知识库问答的实时输出体验。
+
+## 22. RAGService：知识库问答的核心编排器
+
+`backend/app/services/rag_service.py` 是知识库问答的核心。
+
+构造函数接收三个依赖：
+
+```python
+class RAGService:
+    def __init__(
+        self,
+        *,
+        embedding_client: EmbeddingClient,
+        vector_store: QdrantVectorStore,
+        llm_client: LLMClient,
+    ) -> None:
+        ...
+```
+
+核心检索方法：
+
+```python
+async def search(self, *, kb_id: str, query: str, top_k: int) -> list[RetrievedChunk]:
+    with Timer("retrieval.hybrid_search"):
+        query_vector = await self.embedding_client.embed_query(query)
+        return self.vector_store.hybrid_search(
+            kb_id=kb_id,
+            query=query,
+            query_vector=query_vector,
+            top_k=top_k,
+        )
+```
+
+核心回答方法：
+
+```python
+sources = await self.search(kb_id=kb_id, query=query_text, top_k=top_k)
+context = self._build_context(sources)
+with Timer("llm.generate_answer"):
+    answer = await self.llm_client.generate_answer(
+        question=question,
+        context=context,
+        history=history_text,
+    )
+```
+
+这就是 RAG 的核心：
+
+```text
+用户问题 + 历史
+  -> embedding
+  -> 混合检索
+  -> 构造上下文
+  -> LLM 生成答案
+```
+
+## 23. 上下文拼接：把检索结果喂给大模型
+
+`RAGService._build_context()` 会把检索出来的片段拼成一段字符串：
+
+```python
+来源文件：xxx.md
+片段序号：3
+检索方式：fusion
+相关度：0.8123
+内容：...
+```
+
+为什么要这样做？
+
+因为大模型不会自动知道你的私有知识库内容。你必须把检索到的资料放进 Prompt 里。
+
+这一步就是 RAG 中的 Augmented，也就是“增强”。
+
+没有这一步，大模型只能靠通用知识回答，无法可靠回答企业私有文档里的内容。
+
+## 24. LLMClient：真正调用大模型
+
+大模型调用在 `backend/app/integrations/llm.py`。
+
+抽象接口：
+
+```python
+class LLMClient:
+    async def generate_answer(self, *, question: str, context: str, history: str = "") -> str:
+        raise NotImplementedError
+```
+
+真实实现使用 LangChain 的 `ChatOpenAI`，兼容 OpenAI-style API。
+
+Prompt 中最关键的是 system 约束：
+
+```text
+你是一个企业知识库问答助手。
+请只根据给定资料回答问题；如果资料中没有答案，
+请回答“根据当前知识库资料无法确认”。
+```
+
+这能降低模型胡编乱造的概率。
+
+项目还提供 `MockLLMClient`，可以在没有真实 API Key 时完成本地冒烟测试。
+
+## 25. 依赖装配：dependencies.py 像一个简化版 Spring 配置类
+
+依赖装配在 `backend/app/core/dependencies.py`。
+
+例如：
+
+```python
+@lru_cache
+def get_rag_service() -> RAGService:
+    settings = get_settings()
+    return RAGService(
+        embedding_client=create_embedding_client(settings),
+        vector_store=get_vector_store(),
+        llm_client=create_llm_client(settings),
+    )
+```
+
+这相当于手写一个 Bean 工厂。
+
+`@lru_cache` 会缓存函数返回值。第一次调用时创建对象，后面复用之前的对象，有点像 Spring 单例 Bean。
+
+MVP3 中这里还装配了：
+
+```text
+DocumentRepository
+ConversationRepository
+IndexJobRepository
+DocumentIndexService
+RAGService
+ToolRegistry
+LangGraph graph
+IndexWorker
+```
+
+## 26. Repository：SQLite 持久化
+
+当前主要 repository：
+
+```text
+DocumentRepository
+  -> 保存文档元数据、chunk 数量、索引状态、失败原因
+
+ConversationRepository
+  -> 保存会话列表
+  -> 保存 user / assistant 消息
+  -> 保存 assistant 回答对应的引用来源
+
+IndexJobRepository
+  -> 保存索引任务、任务状态、错误信息和上传文件 bytes
+```
+
+对初学者来说，可以把 Repository 理解成 Java 项目里的 DAO / Mapper 层。
+
+Service 不直接写 SQL，而是通过 Repository 完成数据读写。
+
+## 27. 配置：Settings 统一读取环境变量
+
+配置在 `backend/app/core/config.py`。
+
+常见配置：
+
+```python
+qdrant_url: str = "http://localhost:6333"
+document_db_path: str = "data/kb_copilot.sqlite3"
+chunk_size: int = 700
+top_k: int = 5
+async_index_enabled: bool = True
+metrics_enabled: bool = True
+rerank_enabled: bool = False
+embedding_provider: Literal["openai", "mock"] = "openai"
+llm_provider: Literal["openai", "mock"] = "openai"
+```
+
+这类似 Spring Boot 的 `application.yml` + `@ConfigurationProperties`。
+
+`.env` 中配置的值会覆盖默认值。
+
+本地学习时可以使用：
+
+```env
+EMBEDDING_PROVIDER=mock
+LLM_PROVIDER=mock
+```
+
+这样不需要真实模型 API Key，也能先理解工程流程。
+
+## 28. 监控指标：core/metrics.py
+
+MVP3 增加了轻量级内存指标收集器。
+
+代码在 `backend/app/core/metrics.py`。
+
+它记录两类数据：
+
+```text
+counters：计数器，例如 http.requests、http.errors
+timings：耗时列表，例如 http.request、retrieval.hybrid_search、llm.generate_answer
+```
+
+查看接口：
+
+```text
+GET /api/v1/metrics
+```
+
+这是一个 MVP 级实现，适合单实例、本地和演示环境。生产环境后续可以替换成 Prometheus 等方案。
+
+## 29. 前端如何配合 Agent
+
+前端主要在 `frontend/src/App.tsx`。
+
+几个关键点：
+
+- 上传文档后，如果返回 `job_id`，前端会轮询 `getIndexJob()`。
+- 文档列表展示 `queued`、`processing`、`completed`、`failed`。
+- 发送问题默认走 SSE 流式接口。
+- 停止生成会调用前端的 AbortController，中断当前 stream。
+- 引用来源通过 `SourcePopover` 展开。
+- 回答可以通过 `CopyButton` 复制。
+- 有用/无用反馈通过 `FeedbackButtons` 提交。
+
+前端 API 封装在 `frontend/src/api/client.ts`，类型定义在 `frontend/src/types/api.ts`。
+
+## 30. 当前项目的重点亮点
+
+### 亮点 1：RAG 主链路完整
+
+项目已经跑通了从文档上传到大模型回答的完整闭环：
+
+```text
+文档解析 -> 文本切分 -> Embedding -> Qdrant 入库 -> 混合检索 -> Prompt 拼接 -> LLM 回答
+```
+
+### 亮点 2：Agent 编排清晰
+
+LangGraph 把意图识别、知识库问答、工具调用、澄清提示拆成清晰节点。
+
+初学者可以很直观看到：
+
+```text
+State -> Node -> Conditional Edge -> Node -> END
+```
+
+### 亮点 3：异步索引让上传不阻塞
+
+上传接口只创建任务并返回 `job_id`，后台 worker 再慢慢索引。
+
+这比“用户上传后一直等到 embedding 和 Qdrant 全部完成”更接近真实产品。
+
+### 亮点 4：面向接口编程
+
+`EmbeddingClient`、`LLMClient`、`Tool` 都是抽象风格。
+
+真实模型和 mock 模型可以替换，业务工具也可以继续扩展。
+
+### 亮点 5：引用来源可追溯
 
 问答结果不仅返回 `answer`，还返回 `sources`。
 
-```python
-class ChatResponse(BaseModel):
-    conversation_id: str
-    answer: str
-    sources: list[Source]
-```
+知识库问答不能只给答案，还应该告诉用户依据来自哪里。
 
-这点非常重要。
+### 亮点 6：mock 模式降低学习门槛
 
-知识库问答不能只给一个答案，还应该告诉用户答案依据来自哪里。否则用户很难信任模型输出。
+没有模型 API Key 时，也可以使用 mock Embedding 和 mock LLM 跑通基本流程。
 
-### 亮点 6：MVP2 支持文档管理和会话历史
+## 31. 当前项目还不是复杂 Agent 的原因
 
-MVP2 不再只是一次性问答，而是开始接近真实产品：
+当前项目已经有意图识别和工具调用，但仍不是复杂自主 Agent。
 
-```text
-文档列表 / 删除 / 重新索引 / 索引状态
-历史会话 / 消息流 / 引用来源回看 / 多轮追问
-```
+它还没有：
 
-这一步的重点不是让模型更复杂，而是让知识库“可管理、可回看、可继续使用”。
-
-### 亮点 7：mock 模式降低学习门槛
-
-`MockEmbeddingClient` 和 `MockLLMClient` 让项目不依赖真实模型 API Key 也能跑起来。
-
-这对初学者非常友好，因为你可以先理解工程流程，再配置真实模型。
-
-## 21. 当前项目还不是复杂 Agent 的原因
-
-当前项目没有以下能力：
-
-- Function Calling / Tool Calling
-- Agent Loop
-- 长期记忆总结
-- SubAgent
-- MCP
-- 意图识别
-- 多路召回
-- RRF
-- Rerank
+- Agent Loop，也就是多轮“思考 -> 调工具 -> 观察 -> 再思考”。
+- 长期记忆总结。
+- 多 Agent 协作。
+- MCP 远程工具接入。
+- 真实外部业务系统调用。
+- 复杂工具规划。
 
 这不是缺点，而是当前版本的边界。
-
-学习项目最怕一开始把所有概念都塞进去。当前版本先把 RAG 主链路讲清楚，是更适合初学者的设计。
 
 可以这样理解：
 
 ```text
-MVP1：先做一个可靠的 RAG 知识库问答助手
+MVP1：先跑通 RAG 问答
 MVP2：增加文档管理和多轮会话
-MVP3：再考虑混合检索、rerank、权限、监控等生产能力
-更后面：再加入 Tool Calling、Agent Loop、SubAgent、MCP
+MVP3：加入意图路由、工具调用、SSE、异步索引、混合检索、监控
+MVP4：再考虑鉴权、多租户、权限过滤、生产治理
+更后面：再加入 Agent Loop、SubAgent、MCP 等复杂能力
 ```
 
-## 22. 如果后续要进化成更像 Agent 的系统
-
-后续可以按这个顺序升级，而不是一次性加完。
-
-第一步：把多轮会话记忆升级成可总结的长期记忆。
-
-```text
-最近历史消息 -> 会话摘要 -> 用户问题 + 会话摘要 + 检索上下文 -> LLM
-```
-
-第二步：增加意图识别。
-
-```text
-用户输入 -> 判断是普通聊天还是知识库问答
-```
-
-第三步：把知识库检索封装成 Tool。
-
-```text
-LLM 决定是否调用 knowledge_search
-```
-
-第四步：增加更多工具。
-
-```text
-查文档、查数据库、查接口、生成报告
-```
-
-第五步：实现 Agent Loop。
-
-```text
-LLM 思考 -> 调工具 -> 观察结果 -> 继续思考 -> 最终回答
-```
-
-但对当前项目来说，不建议马上加这些复杂能力。先把 RAG 这条主线写稳、讲透、测好，更重要。
-
-## 23. 初学者应该按什么顺序读代码
+## 32. 初学者应该按什么顺序读代码
 
 建议按这个顺序看：
 
 ```text
 1. backend/app/main.py
 2. backend/app/api/v1/api.py
-3. backend/app/api/v1/endpoints/documents.py
-4. backend/app/repositories/documents.py
-5. backend/app/services/document_index_service.py
-6. backend/app/services/document_loader.py
-7. backend/app/services/text_splitter.py
-8. backend/app/integrations/minio_storage.py
-9. backend/app/integrations/embedding.py
-10. backend/app/integrations/qdrant.py
-11. backend/app/api/v1/endpoints/conversations.py
-12. backend/app/repositories/conversations.py
-13. backend/app/api/v1/endpoints/chat.py
-14. backend/app/services/rag_service.py
-15. backend/app/integrations/llm.py
-16. backend/app/core/dependencies.py
-17. backend/app/core/config.py
+3. backend/app/core/config.py
+4. backend/app/core/dependencies.py
+
+文档入库链路：
+5. backend/app/api/v1/endpoints/documents.py
+6. backend/app/repositories/documents.py
+7. backend/app/repositories/index_jobs.py
+8. backend/app/workers/index_worker.py
+9. backend/app/services/document_index_service.py
+10. backend/app/services/document_loader.py
+11. backend/app/services/text_splitter.py
+12. backend/app/integrations/embedding.py
+13. backend/app/integrations/qdrant.py
+
+Agent 问答链路：
+14. backend/app/api/v1/endpoints/chat.py
+15. backend/app/graph/state.py
+16. backend/app/graph/graph.py
+17. backend/app/graph/nodes.py
+18. backend/app/services/rag_service.py
+19. backend/app/tools/registry.py
+20. backend/app/tools/business_tools.py
+21. backend/app/integrations/llm.py
+
+体验和支撑：
+22. backend/app/api/v1/endpoints/search.py
+23. backend/app/api/v1/endpoints/metrics.py
+24. backend/app/core/metrics.py
+25. frontend/src/api/client.ts
+26. frontend/src/App.tsx
 ```
 
 不要一开始就纠结所有 Python 语法。先抓住调用链：
 
 ```text
-Controller -> Service -> Integration -> 外部系统
+Controller -> Service -> Repository / Integration -> 外部系统
+Graph State -> Node -> Route -> Node
 ```
 
-这和 Java 后端项目的基本思路是一样的。
+## 33. 最值得背下来的四段代码
 
-## 24. 最值得背下来的三段代码
+第一段：异步上传创建任务。
 
-第一段：文档入库。
+```python
+document = document_repository.create(..., status="queued")
+job = index_job_repository.create(..., content=content)
+return DocumentUploadResponse(..., job_id=job.job_id, job_status=job.status)
+```
+
+第二段：文档入库。
 
 ```python
 text = self.document_loader.load_text(filename, content)
 chunks = self.text_splitter.split(kb_id=kb_id, doc_id=doc_id, filename=filename, text=text)
 vectors = await self.embedding_client.embed_texts([chunk.content for chunk in chunks])
-self.vector_store.upsert_chunks(chunks, vectors)
+self.vector_store.upsert_chunks(chunks, vectors, created_at=document.created_at.isoformat())
 ```
 
-第二段：RAG 问答。
+第三段：Agent 路由。
 
 ```python
-query_vector = await self.embedding_client.embed_query(question)
-sources = self.vector_store.search(kb_id=kb_id, query_vector=query_vector, top_k=top_k)
+if intent in TOOL_INTENTS:
+    return "tool_executor"
+if intent == "clarification_required":
+    return "clarification"
+return "kb_qa"
+```
+
+第四段：RAG 问答。
+
+```python
+sources = await self.search(kb_id=kb_id, query=query_text, top_k=top_k)
 context = self._build_context(sources)
-answer = await self.llm_client.generate_answer(question=question, context=context)
+answer = await self.llm_client.generate_answer(
+    question=question,
+    context=context,
+    history=history_text,
+)
 ```
 
-第三段：Prompt 约束。
+这四段代码基本就是当前项目 Agent 实现的核心。
 
-```python
-messages = [
-    {
-        "role": "system",
-        "content": (
-            "你是一个企业知识库问答助手。"
-            "请只根据给定资料回答问题；如果资料中没有答案，"
-            "请回答“根据当前知识库资料无法确认”。"
-        ),
-    },
-    {
-        "role": "user",
-        "content": f"资料：\n{context}\n\n问题：\n{question}",
-    },
-]
-```
+## 34. 一句话总结
 
-这三段代码基本就是本项目 Agent 实现的核心。
-
-## 25. 一句话总结
-
-本项目当前的 Agent 实现，本质是一个结构清晰的 RAG 编排器：
+本项目当前的 Agent 实现，本质是一个工程化的知识库 Agent：
 
 ```text
-它不追求复杂的自动规划，而是专注完成一件事：
-把企业文档变成可检索知识，再让大模型基于检索到的资料回答问题。
+它先把企业文档变成可检索知识，再通过 LangGraph 判断用户意图，
+对知识库问题走 RAG，对业务问题走工具，对不清楚的问题要求补充，
+最后用大模型生成可追溯的回答。
 ```
 
-对初学者来说，这是非常好的起点。因为你能从代码里清楚看到 AI 应用的工程本质：不是“直接问大模型”，而是“组织上下文、管理知识、调用模型、返回可追溯结果”。
+对初学者来说，这是一个合适的学习起点。你能从代码里看到 AI 应用的工程本质：不是“直接问大模型”，而是“组织状态、管理知识、选择路径、调用工具、构造上下文、返回可追溯结果”。
